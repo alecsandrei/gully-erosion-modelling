@@ -29,3 +29,4 @@ init_processing()
 
 DEBUG = int(os.getenv('DEBUG', 0))
 CACHE = int(os.getenv('CACHE', 0))
+MODEL = os.getenv('MODEL', 'all')

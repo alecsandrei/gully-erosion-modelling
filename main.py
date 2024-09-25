@@ -16,14 +16,16 @@ from gully_erosion_estimation_qgis.utils import (
     geometries_to_layer
 )
 from gully_erosion_estimation_qgis.geometry import (
-    create_centerline,
+    Centerlines,
     intersection_points,
     get_geometries,
-    convert_to_single_part
+    convert_to_single_part,
+    single_part_gen,
 )
 from gully_erosion_estimation_qgis import (
     DEBUG,
-    CACHE
+    CACHE,
+    MODEL
 )
 
 
@@ -34,8 +36,7 @@ def construct_gpkg_path(gpkg: Path, layer_name: str):
     return f'{gpkg}|layername={layer_name}'
 
 
-def main():
-    model = os.getenv('MODEL')
+def main(model):
     model_dir = DATA_DIR / model
     cache_dir = model_dir
     gpkg = model_dir / f'{model}.gpkg'
@@ -45,6 +46,7 @@ def main():
     layer_2019 = QgsVectorLayer(
         construct_gpkg_path(gpkg, '2019'), '2019', providerLib='ogr'
     )
+    epsg=layer_2012.crs().geographicCrsAuthId()
     assert layer_2019.featureCount() == 1
     assert layer_2012.featureCount() == 1
 
@@ -57,31 +59,53 @@ def main():
         isinstance(polygon_2019.constGet(), (QgsPolygon, QgsMultiPolygon))
     ), f'Expected type {QgsPolygon}, found {type(polygon_2019)}'
 
-    polygon_difference = polygon_2019.difference(polygon_2012)
-
-
     if CACHE:
-        centerline = QgsVectorLayer(
-            (cache_dir / 'centerline.shp').as_posix(), 'centerline', 'ogr'
+        geoms = list(
+            get_geometries(
+                QgsVectorLayer(
+                    (cache_dir / 'centerline.shp').as_posix(), 'centerline', 'ogr'
+                )
+            )
         )
+        centerlines = Centerlines(geoms)
     else:
-        centerline = create_centerline(
+        centerlines = Centerlines.from_layer(
             layer_2019, output=cache_dir / 'centerline.shp'
         )
-    geoms = list(get_geometries(centerline))
-    convert_to_single_part(geoms)
-    points = intersection_points(polygon_2012, geoms)
-    boundary_2019 = polygon_2019.coerceToType(Qgis.WkbType.MultiLineString)[0]
-    points_filtered = [
-        geometry for geometry in points
-        if not geometry.intersects(boundary_2019)
-    ]
-    points_as_layer = geometries_to_layer(
-        points_filtered,
-        epsg=layer_2012.crs().geographicCrsAuthId()
-    )
-    export(points_as_layer, cache_dir / 'intersection_points.shp')
 
+    pour_points = intersection_points(centerlines, polygon_2012)
+    # export(
+    #     geometries_to_layer(pour_points, epsg),
+    #     cache_dir / 'centerline_difference.shp'
+    # )
+    export(
+        geometries_to_layer(pour_points, epsg),
+        cache_dir / 'pour_points.shp'
+    )
+    # print(geoms_difference[0])
+    # points = intersection_points(polygon_2012, geoms_difference)
+    # boundary_2019 = polygon_2019.coerceToType(Qgis.WkbType.MultiLineString)[0]
+    # points_filtered = [
+    #     geometry for geometry in points
+    #     if not geometry.intersects(boundary_2019)
+    # ]
+
+    # points_as_layer = geometries_to_layer(
+    #     points,
+    #     epsg=layer_2012.crs().geographicCrsAuthId()
+    # )
+    # export(points_as_layer, cache_dir / 'intersection_points.shp')
 
 if __name__ == '__main__':
-    main()
+    if MODEL == 'all':
+        for model in [
+            'soldanesti_aval',
+            'saveni_aval',
+            'saveni_amonte',
+            'soldanesti_amonte'
+        ]:
+            if DEBUG:
+                print('Running model', model)
+            main(model)
+    else:
+        main(MODEL)
