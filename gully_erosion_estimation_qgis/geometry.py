@@ -157,6 +157,12 @@ class Centerlines(UserList[QgsGeometry]):
         ]
         return Centerlines(self.post_processing(difference))
 
+    def intersects(self, geometry: QgsGeometry) -> Centerlines:
+        return Centerlines(
+            [centerline for centerline in self.data
+             if centerline.intersects(geometry)]
+        )
+
 
 def fix_geometry(layer: QgsVectorLayer) -> QgsVectorLayer:
     """Always converts to multi-geometry layer."""

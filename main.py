@@ -1,4 +1,3 @@
-import os
 from pathlib import Path
 
 from qgis.core import (
@@ -6,6 +5,7 @@ from qgis.core import (
     QgsPolygon,
     QgsMultiPolygon,
     QgsProject,
+    QgsGeometry,
     Qgis
 )
 
@@ -17,10 +17,9 @@ from gully_erosion_estimation_qgis.utils import (
 )
 from gully_erosion_estimation_qgis.geometry import (
     Centerlines,
+    Endpoints,
     intersection_points,
     get_geometries,
-    convert_to_single_part,
-    single_part_gen,
 )
 from gully_erosion_estimation_qgis import (
     DEBUG,
@@ -29,7 +28,7 @@ from gully_erosion_estimation_qgis import (
 )
 
 
-DATA_DIR = Path('/media/alex/alex/python-modules-packages-utils/gully-erosion-estimation/data/derived')
+DATA_DIR = Path(__file__).parent / 'data'
 
 
 def construct_gpkg_path(gpkg: Path, layer_name: str):
@@ -52,6 +51,7 @@ def main(model):
 
     polygon_2012 = get_first_geometry(layer_2012)
     polygon_2019 = get_first_geometry(layer_2019)
+    difference = polygon_2019.difference(polygon_2012)
     assert (
         isinstance(polygon_2012.constGet(), (QgsPolygon, QgsMultiPolygon))
     ), f'Expected type {QgsPolygon}, found {type(polygon_2012)}'
@@ -73,15 +73,24 @@ def main(model):
             layer_2019, output=cache_dir / 'centerline.shp'
         )
 
-    pour_points = intersection_points(centerlines, polygon_2012)
+    centerlines_subset = [
+        centerline for centerline in centerlines.intersects(difference)
+        if QgsGeometry.fromPoint(Endpoints.from_linestring(centerline).first).intersects(difference.coerceToType(Qgis.WkbType.MultiLineString)[0])
+    ]
+    export(
+        geometries_to_layer(centerlines_subset, epsg=epsg),
+        cache_dir / 'centerline_erosion.shp'
+    )
+
+    # pour_points = intersection_points(centerlines, polygon_2012)
     # export(
     #     geometries_to_layer(pour_points, epsg),
     #     cache_dir / 'centerline_difference.shp'
     # )
-    export(
-        geometries_to_layer(pour_points, epsg),
-        cache_dir / 'pour_points.shp'
-    )
+    # export(
+    #     geometries_to_layer(pour_points, epsg),
+    #     cache_dir / 'pour_points.shp'
+    # )
     # print(geoms_difference[0])
     # points = intersection_points(polygon_2012, geoms_difference)
     # boundary_2019 = polygon_2019.coerceToType(Qgis.WkbType.MultiLineString)[0]
