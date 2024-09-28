@@ -42,7 +42,11 @@ def layer_path_from_geometry_type(wkt_type_str: str, epsg: str):
     return f'{wkt_type_str}?crs=EPSG:{epsg}'
 
 
-def geometries_to_layer(geoms: c.Sequence[QgsGeometry], epsg: str):
+def geometries_to_layer(
+    geoms: c.Sequence[QgsGeometry],
+    epsg: str,
+    name: str | None = None
+):
     geom_types = set(geom.constGet().geometryType() for geom in geoms)
     if len(geom_types) > 1:
         raise Exception(
@@ -52,7 +56,7 @@ def geometries_to_layer(geoms: c.Sequence[QgsGeometry], epsg: str):
     geom_type = list(geom_types)[0]
     layer = QgsVectorLayer(
         layer_path_from_geometry_type(geom_type, epsg),
-        'temp',
+        '' if name is None else name,
         'memory'
     )
 
