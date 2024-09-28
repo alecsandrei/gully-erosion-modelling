@@ -19,6 +19,7 @@ from qgis.core import (
 import numpy as np
 
 from . import DEBUG
+from .utils import geometries_to_layer
 
 if t.TYPE_CHECKING:
     from qgis.core import (
@@ -37,6 +38,12 @@ class Endpoints(t.NamedTuple):
         # Fastest way to drain an iterator
         last = deque(vertices, 1).pop()
         return Endpoints(first, last)
+
+    def as_qgis_geometry(self):
+        return (
+            QgsGeometry.fromPoint(self.first),
+            QgsGeometry.fromPoint(self.last)
+        )
 
 
 def endpoints_gen(
@@ -109,20 +116,25 @@ class Centerlines(UserList[QgsGeometry]):
 
     def __init__(self, initlist=None):
         super().__init__(initlist)
-        convert_to_single_part(self.data)
 
     @staticmethod
-    def from_layer(
-        layer: QgsVectorLayer,
+    def from_polygon(
+        polygon: QgsGeometry,
+        epsg: str,
         output: str | Path = 'TEMPORARY_OUTPUT'
     ):
         if isinstance(output, Path):
             output = output.as_posix()
-        fixed = fix_geometry(layer)
+        as_layer = geometries_to_layer(
+            [polygon],
+            epsg=epsg
+        )
+        geometry_fixed = fix_geometry(as_layer)
         if DEBUG:
-            print('Creating centerline for layer', layer.name())
+            print('Creating centerline from polygon')
+        print(polygon)
         centerline = processing.run('grass:v.voronoi.skeleton', {
-            'input': fixed,
+            'input': geometry_fixed,
             'smoothness': 0.1,
             'thin': 1,
             '-a': False,
