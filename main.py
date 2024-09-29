@@ -12,27 +12,27 @@ from qgis.core import (
     Qgis,
 )
 
-import gully_erosion_estimation_qgis.graph
-from gully_erosion_estimation_qgis.utils import (
+import gully_analysis.graph
+from gully_analysis.utils import (
     get_first_geometry,
     export,
     geometries_to_layer
 )
-from gully_erosion_estimation_qgis.geometry import (
+from gully_analysis.geometry import (
     Centerlines,
     Endpoints,
     intersection_points,
     convert_to_single_part,
     get_geometries,
 )
-from gully_erosion_estimation_qgis import (
+from gully_analysis import (
     DEBUG,
     CACHE,
     MODEL
 )
-from gully_erosion_estimation_qgis.graph import build_graph
+from gully_analysis.graph import build_graph
 
-importlib.reload(gully_erosion_estimation_qgis.graph)
+importlib.reload(gully_analysis.graph)
 
 # Whether or not the script is running from the QGIS Python console
 RUNNING_FROM_CONSOLE = __name__ == '__console__'
