@@ -1,16 +1,27 @@
 from enum import Enum
+from pathlib import Path
 
 
-class PluginName(Enum):
-    DISPLAY_NAME = 'Gully Analysis'
-    SHORT_NAME = 'gullyanalysis'
+class Displayable(Enum):
+
+    def display_name(self) -> str:
+        return ' '.join(
+            [part.capitalize() for part in self.name.split('_')]
+        )
 
 
-class Algorithm(Enum):
+class PluginName(Displayable):
+    GULLY_ANALYSIS = 'gullyanalysis'
+
+
+class Algorithm(Displayable):
     ESTIMATE_EROSION_FUTURE = 'estimatefuture'
 
-    @classmethod
-    def display_name(cls) -> str:
-        return ' '.join(
-            [part.capitalize() for part in cls._name_.split('_')]
-        )
+
+class AlgorithmGroup(Displayable):
+    ESTIMATORS = 'estimators'
+
+
+class Assets(Enum):
+    FOLDER = Path(__file__).parent.parent / 'assets'
+    ICON = FOLDER / 'icon.png'
