@@ -1,21 +1,20 @@
 from __future__ import annotations
 
-import typing as t
 import collections.abc as c
+import typing as t
 
-from qgis.core import edit
 from qgis.core import (
-    QgsVectorLayer,
+    QgsCoordinateTransformContext,
     QgsFeature,
     QgsVectorFileWriter,
-    QgsCoordinateTransformContext
+    QgsVectorLayer,
+    edit,
 )
 
 if t.TYPE_CHECKING:
-    from qgis.core import (
-        QgsGeometry
-    )
     from pathlib import Path
+
+    from qgis.core import QgsGeometry
 
 
 def get_first_geometry(layer: QgsVectorLayer) -> QgsGeometry:
@@ -43,27 +42,30 @@ def export(
     )
 
 
-def layer_path_from_geometry_type(wkt_type_str: str, epsg: str):
-    return f'{wkt_type_str}?crs=EPSG:{epsg}'
-
-
 def geometries_to_layer(
     geoms: c.Sequence[QgsGeometry],
-    epsg: str,
     name: str | None = None
 ):
-    geom_types = set(geom.constGet().geometryType() for geom in geoms)
+    """Converts input geometries to a layer.
+    
+    The resulting layer will not have a CRS.
+    """
+    primitives = [
+        geom.constGet() for geom in geoms
+    ]
+    if any(primitive is None for primitive in primitives):
+        raise Exception(
+            'Failed to retrieve the underyling primitive from a geometry.'
+        )
+    geom_types = set(
+        primitive.geometryType() for primitive in primitives)  # type: ignore
     if len(geom_types) > 1:
         raise Exception(
-            'All the geometries should have the same type. '
-            'Found', geom_types
+            'All of the geometries should have the same type. Found',
+            geom_types
         )
     geom_type = list(geom_types)[0]
-    layer = QgsVectorLayer(
-        layer_path_from_geometry_type(geom_type, epsg),
-        '' if name is None else name,
-        'memory'
-    )
+    layer = QgsVectorLayer(geom_type, '' if name is None else name, 'memory')
 
     def get_feature(idx: int, geom: QgsGeometry):
         feature = QgsFeature(idx)
@@ -71,8 +73,11 @@ def geometries_to_layer(
         return feature
 
     with edit(layer):
-        features = [get_feature(i, geom) for i, geom in enumerate(geoms, start=1)]
+        features = [
+            get_feature(i, geom) for i, geom in enumerate(geoms, start=1)
+        ]
         for feature in features:
             layer.addFeature(feature)
 
+    assert layer.featureCount() == len(geoms)
     return layer
