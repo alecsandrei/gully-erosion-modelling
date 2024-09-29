@@ -2,21 +2,21 @@ from __future__ import annotations
 
 import itertools
 
-from qgis.core import (
-    QgsVectorLayer,
-    QgsGeometry,
-)
 from qgis.analysis import (
-    QgsVectorLayerDirector,
     QgsGraphAnalyzer,
-    QgsGraphBuilder
+    QgsGraphBuilder,
+    QgsVectorLayerDirector,
+)
+from qgis.core import (
+    QgsGeometry,
+    QgsVectorLayer,
 )
 
 
 def build_graph(
     start_points: list[QgsGeometry],
     lines: QgsVectorLayer,
-    destination_points: list[QgsGeometry]
+    destination_points: list[QgsGeometry],
 ):
     director = QgsVectorLayerDirector(
         lines, -1, '', '', '', QgsVectorLayerDirector.Direction.DirectionBoth
@@ -28,8 +28,8 @@ def build_graph(
     tied_points = director.makeGraph(
         builder, itertools.chain(start_points_as_xy, destination_points_as_xy)
     )
-    tied_start_points = tied_points[:len(start_points)]
-    tied_end_points = tied_points[len(start_points):]
+    tied_start_points = tied_points[: len(start_points)]
+    tied_end_points = tied_points[len(start_points) :]
     routes = []
     for tied_start_point in tied_start_points:
         print(tied_start_point)
@@ -50,9 +50,8 @@ def build_graph(
                     break
                 end_idx = graph.edge(tree[end_idx]).fromVertex()
                 route.insert(0, graph.vertex(end_idx).point())
-                if (
-                    shortest_route is not None
-                    and len(route) >= len(shortest_route)
+                if shortest_route is not None and len(route) >= len(
+                    shortest_route
                 ):
                     replace = False
                     break

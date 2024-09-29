@@ -3,11 +3,8 @@ from pathlib import Path
 
 
 class Displayable(Enum):
-
     def display_name(self) -> str:
-        return ' '.join(
-            [part.capitalize() for part in self.name.split('_')]
-        )
+        return ' '.join([part.capitalize() for part in self.name.split('_')])
 
 
 class PluginName(Displayable):

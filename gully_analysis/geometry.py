@@ -11,6 +11,7 @@ from qgis.core import Qgis, QgsGeometry, QgsPoint, QgsVectorLayer
 if t.TYPE_CHECKING:
     from qgis.core import QgsProcessingContext, QgsProcessingFeedback
 
+
 class Endpoints(t.NamedTuple):
     first: QgsPoint
     last: QgsPoint
@@ -26,12 +27,12 @@ class Endpoints(t.NamedTuple):
     def as_qgis_geometry(self):
         return (
             QgsGeometry.fromPoint(self.first),
-            QgsGeometry.fromPoint(self.last)
+            QgsGeometry.fromPoint(self.last),
         )
 
 
 def endpoints_gen(
-    linestrings: c.Iterable[QgsGeometry]
+    linestrings: c.Iterable[QgsGeometry],
 ) -> c.Generator[Endpoints]:
     """Generator which expects linestrings."""
     for linestring in linestrings:
@@ -39,8 +40,7 @@ def endpoints_gen(
 
 
 def intersection_points(
-    lines: c.Iterable[QgsGeometry],
-    polygon: QgsGeometry
+    lines: c.Iterable[QgsGeometry], polygon: QgsGeometry
 ) -> list[QgsGeometry]:
     """
     Finds the intersection points between the lines and the polygon exterior.
@@ -69,7 +69,7 @@ def intersection_points(
 
 def convert_to_single_part(
     geometries: c.Sequence[QgsGeometry],
-    errors: t.Literal['raise', 'ignore'] = 'raise'
+    errors: t.Literal['raise', 'ignore'] = 'raise',
 ) -> None:
     """Converts geometries to single part, in place."""
     for geometry in geometries:
@@ -85,7 +85,7 @@ def convert_to_single_part(
 
 
 def single_part_gen(
-    geometries: c.Sequence[QgsGeometry]
+    geometries: c.Sequence[QgsGeometry],
 ) -> c.Generator[QgsGeometry]:
     for geometry in geometries:
         if geometry.isMultipart():
@@ -97,45 +97,46 @@ def single_part_gen(
 
 
 class Centerlines(UserList[QgsGeometry]):
-
     def __init__(self, initlist=None, layer: QgsVectorLayer | None = None):
         self._layer = layer
         super().__init__(initlist)
 
     @staticmethod
     def from_layer(centerlines: QgsVectorLayer):
-        return Centerlines(
-            list(get_geometries(centerlines)),
-            centerlines
-        )
+        return Centerlines(list(get_geometries(centerlines)), centerlines)
 
     @staticmethod
     def compute(
         polygon_layer: QgsVectorLayer,
         context: QgsProcessingContext,
         feedback: QgsProcessingFeedback,
-        output: str | Path = 'TEMPORARY_OUTPUT'
+        output: str | Path = 'TEMPORARY_OUTPUT',
     ):
         if isinstance(output, Path):
             output = output.as_posix()
         geometry_fixed = fix_geometry(polygon_layer, context, feedback)
-        centerline = processing.run('grass:v.voronoi.skeleton', {
-            'input': geometry_fixed,
-            'smoothness': 0.1,
-            'thin': 1,
-            '-a': False,
-            '-s': True,
-            '-l': False,
-            '-t': False,
-            'output': output,
-            'GRASS_REGION_PARAMETER': None,
-            'GRASS_SNAP_TOLERANCE_PARAMETER': -1,
-            'GRASS_MIN_AREA_PARAMETER': 0.0001,
-            'GRASS_OUTPUT_TYPE_PARAMETER': 0,
-            'GRASS_VECTOR_DSCO': '',
-            'GRASS_VECTOR_LCO': '',
-            'GRASS_VECTOR_EXPORT_NOCAT': False
-        }, context=context, feedback=feedback)['output']
+        centerline = processing.run(
+            'grass:v.voronoi.skeleton',
+            {
+                'input': geometry_fixed,
+                'smoothness': 0.1,
+                'thin': 1,
+                '-a': False,
+                '-s': True,
+                '-l': False,
+                '-t': False,
+                'output': output,
+                'GRASS_REGION_PARAMETER': None,
+                'GRASS_SNAP_TOLERANCE_PARAMETER': -1,
+                'GRASS_MIN_AREA_PARAMETER': 0.0001,
+                'GRASS_OUTPUT_TYPE_PARAMETER': 0,
+                'GRASS_VECTOR_DSCO': '',
+                'GRASS_VECTOR_LCO': '',
+                'GRASS_VECTOR_EXPORT_NOCAT': False,
+            },
+            context=context,
+            feedback=feedback,
+        )['output']
         layer = QgsVectorLayer(centerline, 'centerline', 'ogr')
         geoms = list(get_geometries(layer))
         return Centerlines(geoms, layer)
@@ -155,8 +156,11 @@ class Centerlines(UserList[QgsGeometry]):
 
     def intersects(self, geometry: QgsGeometry) -> Centerlines:
         return Centerlines(
-            [centerline for centerline in self.data
-             if centerline.intersects(geometry)]
+            [
+                centerline
+                for centerline in self.data
+                if centerline.intersects(geometry)
+            ]
         )
 
 
@@ -166,11 +170,12 @@ def fix_geometry(
     feedback: QgsProcessingFeedback,
 ) -> QgsVectorLayer:
     """Always converts to multi-geometry layer."""
-    return processing.run('native:fixgeometries', {
-        'INPUT': layer,
-        'METHOD': 1,
-        'OUTPUT': 'TEMPORARY_OUTPUT'
-    }, context=context, feedback=feedback)['OUTPUT']
+    return processing.run(
+        'native:fixgeometries',
+        {'INPUT': layer, 'METHOD': 1, 'OUTPUT': 'TEMPORARY_OUTPUT'},
+        context=context,
+        feedback=feedback,
+    )['OUTPUT']
 
 
 def has_invalid_geometry(geometries: c.Sequence[QgsGeometry]):
@@ -199,11 +204,10 @@ def polygon_to_line(polygon: QgsGeometry) -> QgsGeometry:
 
 
 class IncorrectGeometry(Exception):
-
     def __init__(
         self,
         found: Qgis.WkbType,
-        expected: c.Sequence[Qgis.WkbType] | Qgis.WkbType
+        expected: c.Sequence[Qgis.WkbType] | Qgis.WkbType,
     ):
         self.message = f'Expected geometry {expected}, found {found}.'
         super().__init__(self.message)

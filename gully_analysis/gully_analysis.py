@@ -3,8 +3,7 @@ from qgis.core import QgsApplication
 from .processing.provider import GullyAnalysisProvider
 
 
-class GullyAnalysis():
-
+class GullyAnalysis:
     def __init__(self, iface):
         self.iface = iface
         self.provider = None

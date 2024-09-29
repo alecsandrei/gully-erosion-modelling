@@ -27,42 +27,32 @@ ExportResult = tuple[
 
 
 def export(
-    layer: QgsVectorLayer,
-    out_file: Path,
-    driver_name: str = 'ESRI Shapefile'
+    layer: QgsVectorLayer, out_file: Path, driver_name: str = 'ESRI Shapefile'
 ) -> ExportResult:
     options = QgsVectorFileWriter.SaveVectorOptions()
     ctx = QgsCoordinateTransformContext()
     options.driverName = driver_name
     return QgsVectorFileWriter.writeAsVectorFormatV3(
-        layer,
-        out_file.as_posix(),
-        ctx,
-        options
+        layer, out_file.as_posix(), ctx, options
     )
 
 
 def geometries_to_layer(
-    geoms: c.Sequence[QgsGeometry],
-    name: str | None = None
+    geoms: c.Sequence[QgsGeometry], name: str | None = None
 ):
     """Converts input geometries to a layer.
-    
+
     The resulting layer will not have a CRS.
     """
-    primitives = [
-        geom.constGet() for geom in geoms
-    ]
+    primitives = [geom.constGet() for geom in geoms]
     if any(primitive is None for primitive in primitives):
         raise Exception(
             'Failed to retrieve the underyling primitive from a geometry.'
         )
-    geom_types = set(
-        primitive.geometryType() for primitive in primitives)  # type: ignore
+    geom_types = set(primitive.geometryType() for primitive in primitives)  # type: ignore
     if len(geom_types) > 1:
         raise Exception(
-            'All of the geometries should have the same type. Found',
-            geom_types
+            'All of the geometries should have the same type. Found', geom_types
         )
     geom_type = list(geom_types)[0]
     layer = QgsVectorLayer(geom_type, '' if name is None else name, 'memory')
