@@ -5,7 +5,8 @@ from .processing_provider.provider import GullyAnalysisProvider
 
 class GullyAnalysis():
 
-    def __init__(self):
+    def __init__(self, iface):
+        self.iface = iface
         self.provider = None
 
     def initProcessing(self):
