@@ -1,7 +1,11 @@
 from qgis.core import QgsProcessingProvider
+from qgis.PyQt.QtGui import QIcon  # type: ignore
 
-from ..enums import PluginName
 from .algorithms import EstimateErosionFuture
+from ..enums import (
+    PluginName,
+    Assets
+)
 
 
 class GullyAnalysisProvider(QgsProcessingProvider):
@@ -16,4 +20,6 @@ class GullyAnalysisProvider(QgsProcessingProvider):
         return self.tr(PluginName.GULLY_ANALYSIS.display_name())
 
     def icon(self):
-        return QgsProcessingProvider.icon(self)
+        return QIcon(
+            Assets.ICON.value.as_posix()
+        )
