@@ -1,6 +1,6 @@
 from qgis.core import QgsApplication
 
-from .processing_provider.provider import GullyAnalysisProvider
+from .processing.provider import GullyAnalysisProvider
 
 
 class GullyAnalysis():
