@@ -1,5 +1,6 @@
 from qgis.core import QgsProcessingProvider
 
+
 class GullyErosionEstimator(QgsProcessingProvider):
 
     def loadAlgorithms(self, *args, **kwargs):
