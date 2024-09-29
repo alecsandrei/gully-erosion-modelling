@@ -1,28 +1,16 @@
 from __future__ import annotations
 
-import typing as t
 import itertools
 
-from qgis.PyQt.QtCore import Qt
 from qgis.core import (
     QgsVectorLayer,
     QgsGeometry,
-    QgsLineString
 )
-from qgis.gui import QgsRubberBand
 from qgis.analysis import (
     QgsVectorLayerDirector,
-    QgsNetworkStrategy,
     QgsGraphAnalyzer,
     QgsGraphBuilder
 )
-from qgis.utils import iface
-
-from .geometry import endpoints_gen
-from .utils import geometries_to_layer
-
-if t.TYPE_CHECKING:
-    from qgis.core import QgsPointXY
 
 
 def build_graph(
