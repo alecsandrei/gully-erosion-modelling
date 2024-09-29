@@ -22,11 +22,16 @@ def get_first_geometry(layer: QgsVectorLayer) -> QgsGeometry:
     return layer.getFeature(layer.allFeatureIds()[0]).geometry()
 
 
+ExportResult = tuple[
+    QgsVectorFileWriter.WriterError, str | None, str | None, str | None
+]
+
+
 def export(
     layer: QgsVectorLayer,
     out_file: Path,
     driver_name: str = 'ESRI Shapefile'
-) -> tuple[QgsVectorFileWriter.WriterError, str | None]:
+) -> ExportResult:
     options = QgsVectorFileWriter.SaveVectorOptions()
     ctx = QgsCoordinateTransformContext()
     options.driverName = driver_name
