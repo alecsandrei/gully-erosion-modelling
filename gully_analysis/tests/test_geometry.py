@@ -5,7 +5,7 @@ from qgis.core import (
     QgsPoint,
 )
 
-from gully_erosion_estimation_qgis.geometry import (
+from gully_analysis.geometry import (
     endpoints_gen,
     Endpoints
 )
