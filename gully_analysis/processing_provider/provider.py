@@ -1,9 +1,9 @@
-from gully_analysis.enums import PluginName
+from ..enums import PluginName
 
 from qgis.core import QgsProcessingProvider
 
 
-class GullyErosionEstimator(QgsProcessingProvider):
+class GullyAnalysisProvider(QgsProcessingProvider):
 
     def loadAlgorithms(self, *args, **kwargs):
         ...
@@ -15,7 +15,4 @@ class GullyErosionEstimator(QgsProcessingProvider):
         return self.tr(PluginName.LONG.value)
 
     def icon(self):
-        """Should return a QIcon which is used for your provider inside
-        the Processing toolbox.
-        """
         return QgsProcessingProvider.icon(self)

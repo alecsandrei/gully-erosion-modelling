@@ -18,8 +18,8 @@ from qgis.analysis import (
 )
 from qgis.utils import iface
 
-from gully_erosion_estimation_qgis.geometry import endpoints_gen
-from gully_erosion_estimation_qgis.utils import geometries_to_layer
+from .geometry import endpoints_gen
+from .utils import geometries_to_layer
 
 if t.TYPE_CHECKING:
     from qgis.core import QgsPointXY

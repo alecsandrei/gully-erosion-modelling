@@ -4,8 +4,6 @@ import typing as t
 import collections.abc as c
 from collections import UserList
 from pathlib import Path
-import itertools
-from functools import partial
 from collections import deque
 
 import processing
@@ -13,10 +11,8 @@ from qgis.core import (
     QgsVectorLayer,
     Qgis,
     QgsGeometry,
-    QgsVertexIterator,
     QgsPoint
 )
-import numpy as np
 
 from . import DEBUG
 from .utils import geometries_to_layer
