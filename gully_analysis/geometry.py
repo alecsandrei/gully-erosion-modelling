@@ -31,14 +31,6 @@ class Endpoints(t.NamedTuple):
         )
 
 
-def endpoints_gen(
-    linestrings: c.Iterable[QgsGeometry],
-) -> c.Generator[Endpoints]:
-    """Generator which expects linestrings."""
-    for linestring in linestrings:
-        yield Endpoints.from_linestring(linestring)
-
-
 def intersection_points(
     lines: c.Iterable[QgsGeometry], polygon: QgsGeometry
 ) -> list[QgsGeometry]:
@@ -65,35 +57,6 @@ def intersection_points(
             if intersection.constGet() not in endpoints:
                 intersections.append(intersection)
     return intersections
-
-
-def convert_to_single_part(
-    geometries: c.Sequence[QgsGeometry],
-    errors: t.Literal['raise', 'ignore'] = 'raise',
-) -> None:
-    """Converts geometries to single part, in place."""
-    for geometry in geometries:
-        if not geometry.isMultipart():
-            continue
-        parts = list(geometry.parts())
-        if len(parts) > 1 and errors == 'raise':
-            raise MultipartGeometryFound(
-                f'{MultipartGeometryFound.default_message} '
-                'To suppress this error, pass errors="ignore".'
-            )
-        geometry.convertToSingleType()
-
-
-def single_part_gen(
-    geometries: c.Sequence[QgsGeometry],
-) -> c.Generator[QgsGeometry]:
-    for geometry in geometries:
-        if geometry.isMultipart():
-            coerced = geometry.coerceToType(Qgis.WkbType.LineString)
-            for part in coerced:
-                yield part
-        else:
-            yield geometry
 
 
 class Centerlines(UserList[QgsGeometry]):
@@ -141,19 +104,6 @@ class Centerlines(UserList[QgsGeometry]):
         geoms = list(get_geometries(layer))
         return Centerlines(geoms, layer)
 
-    @staticmethod
-    def post_processing(geometries: t.Sequence[QgsGeometry]):
-        not_empty = [
-            centerline for centerline in geometries if not centerline.isEmpty()
-        ]
-        return list(single_part_gen(not_empty))
-
-    def difference(self, geometry: QgsGeometry) -> Centerlines:
-        difference = [
-            centerline.difference(geometry) for centerline in self.data
-        ]
-        return Centerlines(self.post_processing(difference))
-
     def intersects(self, geometry: QgsGeometry) -> Centerlines:
         return Centerlines(
             [
@@ -176,10 +126,6 @@ def fix_geometry(
         context=context,
         feedback=feedback,
     )['OUTPUT']
-
-
-def has_invalid_geometry(geometries: c.Sequence[QgsGeometry]):
-    return all(geometry.isGeosValid() for geometry in geometries)
 
 
 def get_geometries(layer: QgsVectorLayer) -> c.Generator[QgsGeometry]:

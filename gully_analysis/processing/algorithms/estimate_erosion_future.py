@@ -22,9 +22,10 @@ from ...geometry import (
     Centerlines,
     Endpoints,
     intersection_points,
+    polygon_to_line
 )
 from ...graph import build_graph
-from ...utils import geometries_to_layer, get_first_geometry
+from ...utils import geometries_to_layer, get_first_geometry,
 
 
 class EstimateErosionFuture(QgsProcessingAlgorithm):
@@ -134,17 +135,13 @@ class EstimateErosionFuture(QgsProcessingAlgorithm):
         gully_polygon = get_first_geometry(gully_boundary).coerceToType(
             Qgis.WkbType.Polygon
         )[0]
-        gully_limit = gully_polygon.coerceToType(Qgis.WkbType.MultiLineString)[
-            0
-        ]
+        gully_limit = polygon_to_line(gully_polygon)
         gully_future_polygon = get_first_geometry(
             gully_future_boundary
         ).coerceToType(Qgis.WkbType.Polygon)[0]
 
         difference = gully_future_polygon.difference(gully_polygon)
-        limit_difference = difference.coerceToType(
-            Qgis.WkbType.MultiLineString
-        )[0]
+        limit_difference = polygon_to_line(difference)
 
         if centerlines is None:
             # Leaving a 'TEMPORARY_OUTPUT' here will create a geopackage

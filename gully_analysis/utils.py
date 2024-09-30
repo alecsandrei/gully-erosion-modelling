@@ -29,6 +29,8 @@ ExportResult = tuple[
 def export(
     layer: QgsVectorLayer, out_file: Path, driver_name: str = 'ESRI Shapefile'
 ) -> ExportResult:
+    # NOTE: this function is unused. Should be dropped
+    # later on if no use is found
     options = QgsVectorFileWriter.SaveVectorOptions()
     ctx = QgsCoordinateTransformContext()
     options.driverName = driver_name
@@ -39,7 +41,7 @@ def export(
 
 def geometries_to_layer(
     geoms: c.Sequence[QgsGeometry], name: str | None = None
-):
+) -> QgsVectorLayer:
     """Converts input geometries to a layer.
 
     The resulting layer will not have a CRS.
