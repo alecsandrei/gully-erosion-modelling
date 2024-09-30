@@ -22,10 +22,10 @@ from ...geometry import (
     Centerlines,
     Endpoints,
     intersection_points,
-    polygon_to_line
+    polygon_to_line,
 )
 from ...graph import build_graph
-from ...utils import geometries_to_layer, get_first_geometry,
+from ...utils import geometries_to_layer, get_first_geometry
 
 
 class EstimateErosionFuture(QgsProcessingAlgorithm):
