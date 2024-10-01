@@ -25,6 +25,7 @@ from ...geometry import (
     polygon_to_line,
 )
 from ...graph import build_graph
+from ...raster import DEM
 from ...utils import geometries_to_layer, get_first_geometry
 
 
@@ -97,7 +98,7 @@ class EstimateErosionFuture(QgsProcessingAlgorithm):
         self.addParameter(
             QgsProcessingParameterBoolean(
                 self.DEBUG_MODE,
-                self.tr('Debug mode (more logs and intermediary files)'),
+                self.tr('Debug mode (more logs and intermediary layers)'),
                 [QgsProcessing.TypeVectorLine],
             )
         )
@@ -198,5 +199,7 @@ class EstimateErosionFuture(QgsProcessingAlgorithm):
         shortest_paths_as_layer.setCrs(crs)
         if debug_mode:
             project.addMapLayer(shortest_paths_as_layer)
-
+        sink_removed = DEM(gully_elevation).remove_sinks(context, feedback)
+        if debug_mode:
+            project.addMapLayer(sink_removed.layer)
         return {self.OUTPUT: None}
