@@ -199,7 +199,17 @@ class EstimateErosionFuture(QgsProcessingAlgorithm):
         shortest_paths_as_layer.setCrs(crs)
         if debug_mode:
             project.addMapLayer(shortest_paths_as_layer)
-        sink_removed = DEM(gully_elevation).remove_sinks(context, feedback)
+        sink_removed = DEM(gully_elevation).remove_sinks(
+            context, feedback if debug_mode else None
+        )
         if debug_mode:
             project.addMapLayer(sink_removed.layer)
+        profiles = sink_removed.flow_path_profiles_from_points(
+            points_intersecting_gully_boundary,
+            context=context,
+            feedback=feedback if debug_mode else None,
+        )
+        profiles.name = 'profiles'
+        feedback.pushDebugInfo(str(profiles))
+        project.addMapLayer(profiles)
         return {self.OUTPUT: None}
