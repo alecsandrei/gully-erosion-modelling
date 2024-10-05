@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import typing as t
+from enum import Enum, auto
 from pathlib import Path
 
 from qgis.core import (
@@ -26,7 +27,20 @@ from ...geometry import (
 )
 from ...graph import build_graph
 from ...raster import DEM
-from ...utils import geometries_to_layer, get_first_geometry
+from ...utils import (
+    geometries_to_layer,
+    get_first_geometry,
+    remove_layers_from_project,
+)
+
+
+class Layers(Enum):
+    CENTERLINES = auto()
+    POUR_POINTS = auto()
+    FLOW_PATH_PROFILES = auto()
+    DEM_NO_SINKS = auto()
+    SHORTEST_PATHS = auto()
+    POINTS_INTERSECTING_GULLY = auto()
 
 
 class EstimateErosionFuture(QgsProcessingAlgorithm):
@@ -133,6 +147,8 @@ class EstimateErosionFuture(QgsProcessingAlgorithm):
             parameters, self.CENTERLINES, context
         )
         debug_mode = self.parameterAsBool(parameters, self.DEBUG_MODE, context)
+        if debug_mode:
+            remove_layers_from_project(project, Layers._member_names_)
         gully_polygon = get_first_geometry(gully_boundary).coerceToType(
             Qgis.WkbType.Polygon
         )[0]
@@ -160,6 +176,7 @@ class EstimateErosionFuture(QgsProcessingAlgorithm):
             )
             if debug_mode:
                 feedback.pushDebugInfo(f'Saved centerlines at {temp_path}')
+                centerlines._layer.setName(Layers.CENTERLINES.name)
                 project.addMapLayer(centerlines._layer)  # type: ignore
                 feedback.pushDebugInfo('Added centerlines in the project')
 
@@ -173,28 +190,43 @@ class EstimateErosionFuture(QgsProcessingAlgorithm):
             ).as_qgis_geometry()
             if (
                 first.intersects(limit_difference)
-                and not last.intersects(gully_limit)
-                and not first.intersects(gully_limit)
+                # < gully_elevation.rasterUnitsPerPixelX()
+                # and last.distance(gully_limit)
+                # > gully_elevation.rasterUnitsPerPixelX()
+                and first.distance(gully_limit)
+                > gully_elevation.rasterUnitsPerPixelX()
             ):
                 pour_points.append(first)
+        if debug_mode:
+            pour_points_layer = geometries_to_layer(
+                pour_points, Layers.POUR_POINTS.name
+            )
+            pour_points_layer.setCrs(crs)
+            project.addMapLayer(pour_points_layer)
 
         points_intersecting_gully_boundary = intersection_points(
             centerlines, gully_polygon
         )
-
         if debug_mode:
+            points_intersecting_gully_layer = geometries_to_layer(
+                points_intersecting_gully_boundary,
+                Layers.POINTS_INTERSECTING_GULLY.name,
+            )
+            points_intersecting_gully_layer.setCrs(crs)
+            project.addMapLayer(points_intersecting_gully_layer)
             feedback.pushDebugInfo('Building graph to merge the centerlines.')
         shortest_paths = list(
             build_graph(
                 pour_points,
                 centerlines._layer,
                 points_intersecting_gully_boundary,
+                feedback,
             )
         )
         if debug_mode:
             feedback.pushDebugInfo('Graph built.')
         shortest_paths_as_layer = geometries_to_layer(
-            shortest_paths, 'shortest_paths'
+            shortest_paths, Layers.SHORTEST_PATHS.name
         )
         shortest_paths_as_layer.setCrs(crs)
         if debug_mode:
@@ -203,13 +235,15 @@ class EstimateErosionFuture(QgsProcessingAlgorithm):
             context, feedback if debug_mode else None
         )
         if debug_mode:
+            sink_removed.layer.setName(Layers.DEM_NO_SINKS.name)
             project.addMapLayer(sink_removed.layer)
         profiles = sink_removed.flow_path_profiles_from_points(
             points_intersecting_gully_boundary,
             context=context,
             feedback=feedback if debug_mode else None,
         )
-        profiles.name = 'profiles'
-        feedback.pushDebugInfo(str(profiles))
-        project.addMapLayer(profiles)
+        if debug_mode:
+            profiles.setName(Layers.FLOW_PATH_PROFILES.name)
+            feedback.pushDebugInfo(str(profiles))
+            project.addMapLayer(profiles)
         return {self.OUTPUT: None}

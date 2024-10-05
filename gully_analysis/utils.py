@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import collections.abc as c
+import itertools
 import typing as t
 
 from qgis.core import (
     QgsCoordinateTransformContext,
     QgsFeature,
+    QgsProject,
     QgsVectorFileWriter,
     QgsVectorLayer,
     edit,
@@ -37,6 +39,19 @@ def export(
     return QgsVectorFileWriter.writeAsVectorFormatV3(
         layer, out_file.as_posix(), ctx, options
     )
+
+
+def remove_layers_from_project(
+    project: QgsProject, layer_names: list[str]
+) -> None:
+    for map_layer in itertools.chain.from_iterable(
+        project.mapLayersByName(layer_name) for layer_name in layer_names
+    ):
+        # NOTE: I also tried removeMapLayers to avoid
+        # a for loop but I was getting
+        # TypeError: index 0 has type 'QgsVectorLayer' but 'str' is expected
+
+        project.removeMapLayer(map_layer.id())
 
 
 def geometries_to_layer(
