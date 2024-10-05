@@ -1,22 +1,24 @@
 from __future__ import annotations
 
 import itertools
+import typing as t
 
 from qgis.analysis import (
     QgsGraphAnalyzer,
     QgsGraphBuilder,
     QgsVectorLayerDirector,
 )
-from qgis.core import (
-    QgsGeometry,
-    QgsVectorLayer,
-)
+from qgis.core import QgsGeometry, QgsVectorLayer
+
+if t.TYPE_CHECKING:
+    from qgis.core import QgsProcessingFeedback
 
 
 def build_graph(
     start_points: list[QgsGeometry],
     lines: QgsVectorLayer,
     destination_points: list[QgsGeometry],
+    feedback: QgsProcessingFeedback,
 ):
     director = QgsVectorLayerDirector(
         lines, -1, '', '', '', QgsVectorLayerDirector.Direction.DirectionBoth
@@ -31,21 +33,22 @@ def build_graph(
     tied_start_points = tied_points[: len(start_points)]
     tied_end_points = tied_points[len(start_points) :]
     routes = []
-    for tied_start_point in tied_start_points:
+    for i, tied_start_point in enumerate(tied_start_points, start=1):
         print(tied_start_point)
         graph = builder.graph()
         start_idx = graph.findVertex(tied_start_point)
         shortest_route = None
-        for tied_end_point in tied_end_points:
+        for j, tied_end_point in enumerate(tied_end_points, start=1):
             end_idx = graph.findVertex(tied_end_point)
             tree, _ = QgsGraphAnalyzer.dijkstra(graph, start_idx, 0)
-            graph = builder.graph()
             route = [graph.vertex(end_idx).point()]
 
             replace = True
             while end_idx != start_idx:
                 if tree[end_idx] == -1:
-                    print('No route?')
+                    feedback.pushDebugInfo(
+                        f'No route for start id {i}, end id {j}?, {route, end_idx, start_idx}'
+                    )
                     replace = False
                     break
                 end_idx = graph.edge(tree[end_idx]).fromVertex()
