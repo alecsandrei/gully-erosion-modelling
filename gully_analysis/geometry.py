@@ -100,9 +100,24 @@ class Centerlines(UserList[QgsGeometry]):
             context=context,
             feedback=feedback,
         )['output']
-        layer = QgsVectorLayer(centerline, 'centerline', 'ogr')
-        geoms = list(get_geometries(layer))
-        return Centerlines(geoms, layer)
+        # Removing duplicate vertices is required to make a valid network
+        without_duplicate_vertices = processing.run(
+            'native:removeduplicatevertices',
+            {
+                'INPUT': centerline,
+                'TOLERANCE': 1e-06,
+                'USE_Z_VALUE': False,
+                'OUTPUT': 'TEMPORARY_OUTPUT',
+            },
+            context=context,
+            feedback=feedback,
+        )['OUTPUT']
+        if not isinstance(without_duplicate_vertices, QgsVectorLayer):
+            without_duplicate_vertices = QgsVectorLayer(
+                without_duplicate_vertices, 'centerline', 'ogr'
+            )
+        geoms = list(get_geometries(without_duplicate_vertices))
+        return Centerlines(geoms, without_duplicate_vertices)
 
     def intersects(self, geometry: QgsGeometry) -> Centerlines:
         return Centerlines(
