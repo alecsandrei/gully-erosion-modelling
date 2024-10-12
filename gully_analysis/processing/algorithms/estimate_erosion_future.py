@@ -34,6 +34,9 @@ from ...utils import (
     remove_layers_from_project,
 )
 
+if t.TYPE_CHECKING:
+    from qgis.core import QgsVectorLayer
+
 
 class Layers(Enum):
     CENTERLINES = auto()
@@ -249,7 +252,7 @@ class EstimateErosionFuture(QgsProcessingAlgorithm):
             )
             profile_pour_points_layer.setCrs(crs)
             project.addMapLayer(profile_pour_points_layer)
-        profiles = sink_removed.flow_path_profiles_from_points(
+        profiles: QgsVectorLayer = sink_removed.flow_path_profiles_from_points(
             profile_pour_points,
             context=context,
             feedback=feedback if debug_mode else None,
