@@ -162,10 +162,10 @@ def get_geometries(layer: QgsVectorLayer) -> c.Generator[QgsGeometry]:
 def check_incorrect_geometry(
     expected_types: c.Sequence[Qgis.WkbType],
     geometries: c.Iterable[QgsGeometry],
-) -> IncorrectGeometry | None:
+) -> IncorrectGeometryType | None:
     for geometry in geometries:
         if (type_ := geometry.wkbType()) not in expected_types:
-            return IncorrectGeometry(type_, expected_types)
+            return IncorrectGeometryType(type_, expected_types)
     return None
 
 
@@ -177,7 +177,7 @@ def polygon_to_line(polygon: QgsGeometry) -> QgsGeometry:
 class GeometryError(Exception): ...
 
 
-class IncorrectGeometry(GeometryError):
+class IncorrectGeometryType(GeometryError):
     def __init__(
         self,
         found: Qgis.WkbType,
