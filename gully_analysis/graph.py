@@ -8,18 +8,29 @@ from qgis.analysis import (
     QgsGraphBuilder,
     QgsVectorLayerDirector,
 )
-from qgis.core import QgsGeometry, QgsVectorLayer
+from qgis.core import QgsGeometry, QgsPointXY
 
 if t.TYPE_CHECKING:
-    from qgis.core import QgsProcessingFeedback
+    from qgis.core import QgsProcessingFeedback, QgsVectorLayer
+
+Path = QgsGeometry
+Start = QgsPointXY
+End = QgsPointXY
+ShortestPaths = list[tuple[Start, End, Path]]
 
 
-def build_graph(
+def get_shortest_paths(
     start_points: list[QgsGeometry],
     lines: QgsVectorLayer,
     destination_points: list[QgsGeometry],
-    feedback: QgsProcessingFeedback,
-):
+    feedback: QgsProcessingFeedback | None = None,
+) -> ShortestPaths:
+    """Computes shortest paths from the start points to the destination points.
+
+    The shortest path is the path from the start point to the closest
+    destination point in the network.
+    """
+    # TODO: find a faster way to compute this
     director = QgsVectorLayerDirector(
         lines, -1, '', '', '', QgsVectorLayerDirector.Direction.DirectionBoth
     )
