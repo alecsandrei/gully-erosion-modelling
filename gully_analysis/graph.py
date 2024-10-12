@@ -43,12 +43,12 @@ def get_shortest_paths(
     )
     tied_start_points = tied_points[: len(start_points)]
     tied_end_points = tied_points[len(start_points) :]
-    routes = []
+    shortest_paths: ShortestPaths = []
     for i, tied_start_point in enumerate(tied_start_points, start=1):
-        print(tied_start_point)
         graph = builder.graph()
         start_idx = graph.findVertex(tied_start_point)
         shortest_route = None
+        route_end_point = None
         for j, tied_end_point in enumerate(tied_end_points, start=1):
             end_idx = graph.findVertex(tied_end_point)
             tree, _ = QgsGraphAnalyzer.dijkstra(graph, start_idx, 0)
@@ -57,9 +57,10 @@ def get_shortest_paths(
             replace = True
             while end_idx != start_idx:
                 if tree[end_idx] == -1:
-                    feedback.pushDebugInfo(
-                        f'No route for start id {i}, end id {j}?, {route, end_idx, start_idx}'
-                    )
+                    if feedback is not None:
+                        feedback.pushWarning(
+                            f'No route for start id {i}, end id {j}?, {route, end_idx, start_idx}'
+                        )
                     replace = False
                     break
                 end_idx = graph.edge(tree[end_idx]).fromVertex()
@@ -71,10 +72,17 @@ def get_shortest_paths(
                     break
 
             if replace:
+                route_end_point = tied_end_point
                 shortest_route = route
 
         if shortest_route:
-            routes.append(shortest_route)
+            assert route_end_point is not None
+            shortest_paths.append(
+                (
+                    tied_start_point,
+                    route_end_point,
+                    QgsGeometry.fromPolylineXY(shortest_route),
+                )
+            )
 
-    for route in routes:
-        yield QgsGeometry.fromPolylineXY(route)
+    return shortest_paths
