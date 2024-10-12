@@ -8,6 +8,8 @@ from pathlib import Path
 import processing
 from qgis.core import Qgis, QgsGeometry, QgsPoint, QgsVectorLayer
 
+from gully_analysis.utils import get_geometries_from_layer
+
 if t.TYPE_CHECKING:
     from qgis.core import QgsProcessingContext, QgsProcessingFeedback
 
@@ -76,7 +78,9 @@ class Centerlines(UserList[QgsGeometry]):
 
     @staticmethod
     def from_layer(centerlines: QgsVectorLayer):
-        return Centerlines(list(get_geometries(centerlines)), centerlines)
+        return Centerlines(
+            list(get_geometries_from_layer(centerlines)), centerlines
+        )
 
     @staticmethod
     def compute(
@@ -126,7 +130,7 @@ class Centerlines(UserList[QgsGeometry]):
             without_duplicate_vertices = QgsVectorLayer(
                 without_duplicate_vertices, 'centerline', 'ogr'
             )
-        geoms = list(get_geometries(without_duplicate_vertices))
+        geoms = list(get_geometries_from_layer(without_duplicate_vertices))
         return Centerlines(geoms, without_duplicate_vertices)
 
     def intersects(self, geometry: QgsGeometry) -> Centerlines:
@@ -151,12 +155,6 @@ def fix_geometry(
         context=context,
         feedback=feedback,
     )['OUTPUT']
-
-
-def get_geometries(layer: QgsVectorLayer) -> c.Generator[QgsGeometry]:
-    ids = layer.allFeatureIds()
-    for id in ids:
-        yield layer.getFeature(id).geometry()
 
 
 def check_incorrect_geometry(

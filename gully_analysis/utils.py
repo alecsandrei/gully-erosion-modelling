@@ -23,6 +23,14 @@ def get_first_geometry(layer: QgsVectorLayer) -> QgsGeometry:
     return layer.getFeature(layer.allFeatureIds()[0]).geometry()
 
 
+def get_geometries_from_layer(
+    layer: QgsVectorLayer,
+) -> c.Generator[QgsGeometry]:
+    ids = layer.allFeatureIds()
+    for id in ids:
+        yield layer.getFeature(id).geometry()
+
+
 ExportResult = tuple[
     QgsVectorFileWriter.WriterError, str | None, str | None, str | None
 ]
