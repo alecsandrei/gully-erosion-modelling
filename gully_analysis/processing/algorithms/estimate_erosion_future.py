@@ -6,6 +6,7 @@ from pathlib import Path
 
 from qgis.core import (
     Qgis,
+    QgsGeometry,
     QgsProcessing,
     QgsProcessingAlgorithm,
     QgsProcessingContext,
@@ -25,7 +26,7 @@ from ...geometry import (
     intersection_points,
     polygon_to_line,
 )
-from ...graph import build_graph
+from ...graph import get_shortest_paths
 from ...raster import DEM
 from ...utils import (
     geometries_to_layer,
@@ -36,11 +37,13 @@ from ...utils import (
 
 class Layers(Enum):
     CENTERLINES = auto()
-    POUR_POINTS = auto()
+    DIFFERENCE = auto()
+    SHORTEST_PATHS_START_POINTS = auto()
     FLOW_PATH_PROFILES = auto()
     DEM_NO_SINKS = auto()
     SHORTEST_PATHS = auto()
     POINTS_INTERSECTING_GULLY = auto()
+    FLOW_PATH_PROFILE_POUR_POINTS = auto()
 
 
 class EstimateErosionFuture(QgsProcessingAlgorithm):
@@ -158,6 +161,12 @@ class EstimateErosionFuture(QgsProcessingAlgorithm):
         ).coerceToType(Qgis.WkbType.Polygon)[0]
 
         difference = gully_future_polygon.difference(gully_polygon)
+        if debug_mode:
+            difference_layer = geometries_to_layer(
+                [difference], Layers.DIFFERENCE.name
+            )
+            difference_layer.setCrs(crs)
+            project.addMapLayer(difference_layer)
         limit_difference = polygon_to_line(difference)
 
         if centerlines is None:
@@ -185,21 +194,16 @@ class EstimateErosionFuture(QgsProcessingAlgorithm):
 
         pour_points = []
         for centerline in centerlines.intersects(difference):
-            first, last = Endpoints.from_linestring(
-                centerline
-            ).as_qgis_geometry()
+            first, _ = Endpoints.from_linestring(centerline).as_qgis_geometry()
             if (
                 first.intersects(limit_difference)
-                # < gully_elevation.rasterUnitsPerPixelX()
-                # and last.distance(gully_limit)
-                # > gully_elevation.rasterUnitsPerPixelX()
                 and first.distance(gully_limit)
                 > gully_elevation.rasterUnitsPerPixelX()
             ):
                 pour_points.append(first)
         if debug_mode:
             pour_points_layer = geometries_to_layer(
-                pour_points, Layers.POUR_POINTS.name
+                pour_points, Layers.SHORTEST_PATHS_START_POINTS.name
             )
             pour_points_layer.setCrs(crs)
             project.addMapLayer(pour_points_layer)
@@ -215,21 +219,19 @@ class EstimateErosionFuture(QgsProcessingAlgorithm):
             points_intersecting_gully_layer.setCrs(crs)
             project.addMapLayer(points_intersecting_gully_layer)
             feedback.pushDebugInfo('Building graph to merge the centerlines.')
-        shortest_paths = list(
-            build_graph(
-                pour_points,
-                centerlines._layer,
-                points_intersecting_gully_boundary,
-                feedback,
-            )
+        shortest_paths = get_shortest_paths(
+            pour_points,
+            centerlines._layer,
+            points_intersecting_gully_boundary,
+            feedback,
         )
         if debug_mode:
             feedback.pushDebugInfo('Graph built.')
-        shortest_paths_as_layer = geometries_to_layer(
-            shortest_paths, Layers.SHORTEST_PATHS.name
-        )
-        shortest_paths_as_layer.setCrs(crs)
         if debug_mode:
+            shortest_paths_as_layer = geometries_to_layer(
+                [line[2] for line in shortest_paths], Layers.SHORTEST_PATHS.name
+            )
+            shortest_paths_as_layer.setCrs(crs)
             project.addMapLayer(shortest_paths_as_layer)
         sink_removed = DEM(gully_elevation).remove_sinks(
             context, feedback if debug_mode else None
@@ -237,8 +239,18 @@ class EstimateErosionFuture(QgsProcessingAlgorithm):
         if debug_mode:
             sink_removed.layer.setName(Layers.DEM_NO_SINKS.name)
             project.addMapLayer(sink_removed.layer)
+        profile_pour_points = [
+            QgsGeometry.fromPointXY(path[1]) for path in shortest_paths
+        ]
+        if debug_mode:
+            profile_pour_points_layer = geometries_to_layer(
+                profile_pour_points,
+                Layers.FLOW_PATH_PROFILE_POUR_POINTS.name,
+            )
+            profile_pour_points_layer.setCrs(crs)
+            project.addMapLayer(profile_pour_points_layer)
         profiles = sink_removed.flow_path_profiles_from_points(
-            points_intersecting_gully_boundary,
+            profile_pour_points,
             context=context,
             feedback=feedback if debug_mode else None,
         )
