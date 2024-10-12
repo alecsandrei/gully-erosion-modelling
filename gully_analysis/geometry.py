@@ -64,6 +64,16 @@ class Centerlines(UserList[QgsGeometry]):
         self._layer = layer
         super().__init__(initlist)
 
+    def as_multilinestring(self) -> QgsGeometry:
+        geom = QgsGeometry()
+        for part in self.data:
+            add_part_result = geom.addPartGeometry(part)
+            if not add_part_result == Qgis.GeometryOperationResult.Success:
+                raise GeometryError(
+                    f'Failed to convert {self!r} to a MultiLineString QgsGeometry.'
+                )
+        return geom.coerceToType(Qgis.WkbType.MultiLineString)[0]
+
     @staticmethod
     def from_layer(centerlines: QgsVectorLayer):
         return Centerlines(list(get_geometries(centerlines)), centerlines)
