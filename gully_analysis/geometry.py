@@ -174,7 +174,10 @@ def polygon_to_line(polygon: QgsGeometry) -> QgsGeometry:
     return polygon.coerceToType(Qgis.WkbType.MultiLineString)[0]
 
 
-class IncorrectGeometry(Exception):
+class GeometryError(Exception): ...
+
+
+class IncorrectGeometry(GeometryError):
     def __init__(
         self,
         found: Qgis.WkbType,
@@ -184,7 +187,7 @@ class IncorrectGeometry(Exception):
         super().__init__(self.message)
 
 
-class MultipartGeometryFound(Exception):
+class MultipartGeometryFound(GeometryError):
     default_message = 'Expected single part geometry, found multi part.'
 
     def __init__(self, message: str | None = None):
