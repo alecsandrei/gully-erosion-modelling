@@ -23,6 +23,15 @@ def get_first_geometry(layer: QgsVectorLayer) -> QgsGeometry:
     return layer.getFeature(layer.allFeatureIds()[0]).geometry()
 
 
+def get_geometries_from_path(*paths: Path):
+    return itertools.chain.from_iterable(
+        get_geometries_from_layer(
+            QgsVectorLayer(path.as_posix(), 'temp', 'ogr')
+        )
+        for path in paths
+    )
+
+
 def get_geometries_from_layer(
     layer: QgsVectorLayer,
 ) -> c.Generator[QgsGeometry]:
