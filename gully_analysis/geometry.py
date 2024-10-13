@@ -6,9 +6,10 @@ from collections import UserList, deque
 from pathlib import Path
 
 import processing
+from qgis.analysis import QgsGeometrySnapper
 from qgis.core import Qgis, QgsGeometry, QgsPoint, QgsVectorLayer
 
-from gully_analysis.utils import get_geometries_from_layer
+from .utils import get_geometries_from_layer
 
 if t.TYPE_CHECKING:
     from qgis.core import QgsProcessingContext, QgsProcessingFeedback
@@ -185,6 +186,15 @@ def check_incorrect_geometry(
 def polygon_to_line(polygon: QgsGeometry) -> QgsGeometry:
     """Coerces a polygon to a MultiLineString."""
     return polygon.coerceToType(Qgis.WkbType.MultiLineString)[0]
+
+
+def snap_to_geometry(
+    geometries: c.Sequence[QgsGeometry],
+    snap_to: c.Sequence[QgsGeometry],
+    tolerance: float,
+) -> c.Generator[QgsGeometry, None, None]:
+    for geometry in geometries:
+        yield QgsGeometrySnapper.snapGeometry(geometry, tolerance, snap_to)
 
 
 class GeometryError(Exception): ...
