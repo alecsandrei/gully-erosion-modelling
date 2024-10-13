@@ -298,7 +298,6 @@ class EstimateErosionFuture(QgsProcessingAlgorithm):
                 shortest_paths,
                 profiles_snapped,
                 profile_pour_points_dedup,
-                feedback,
             )
         )
         if debug_mode:
@@ -314,7 +313,6 @@ class EstimateErosionFuture(QgsProcessingAlgorithm):
         shortest_paths: ShortestPaths,
         flow_path_profiles: t.Sequence[QgsGeometry],
         flow_path_profiles_pour_points: t.Sequence[QgsGeometry],
-        feedback: QgsProcessingFeedback | None = None,
     ) -> c.Generator[QgsGeometry, None, None]:
         """Maps the flow path profiles with the shortest paths (centerlines).
 
