@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import collections.abc as c
 import typing as t
 from enum import Enum, auto
 from pathlib import Path
@@ -7,6 +8,7 @@ from pathlib import Path
 from qgis.core import (
     Qgis,
     QgsGeometry,
+    QgsPointXY,
     QgsProcessing,
     QgsProcessingAlgorithm,
     QgsProcessingContext,
@@ -36,6 +38,9 @@ from ...utils import (
     remove_layers_from_project,
 )
 
+if t.TYPE_CHECKING:
+    from ...graph import ShortestPaths
+
 
 class Layers(Enum):
     CENTERLINES = auto()
@@ -46,6 +51,7 @@ class Layers(Enum):
     SHORTEST_PATHS = auto()
     POINTS_INTERSECTING_GULLY = auto()
     FLOW_PATH_PROFILE_POUR_POINTS = auto()
+    MAPPED_PROFILES = auto()
 
 
 class EstimateErosionFuture(QgsProcessingAlgorithm):
@@ -283,10 +289,59 @@ class EstimateErosionFuture(QgsProcessingAlgorithm):
             profile_snapped.convertToMultiType()
         if debug_mode:
             profiles_layer = geometries_to_layer(
-                profiles_snapped, 'profiles_snapped'
+                profiles_snapped, Layers.FLOW_PATH_PROFILES.name
             )
-            profiles_layer.setCrs(project.crs())
-            profiles_layer.setName(Layers.FLOW_PATH_PROFILES.name)
-            feedback.pushDebugInfo(str(profiles_layer))
+            profiles_layer.setCrs(crs)
             project.addMapLayer(profiles_layer)
+        mapped_profiles = list(
+            self.map_shortest_paths_with_flow_paths(
+                shortest_paths,
+                profiles_snapped,
+                profile_pour_points_dedup,
+                feedback,
+            )
+        )
+        if debug_mode:
+            mapped_profiles_layer = geometries_to_layer(
+                mapped_profiles, name=Layers.MAPPED_PROFILES.name
+            )
+            mapped_profiles_layer.setCrs(crs)
+            project.addMapLayer(mapped_profiles_layer)
         return {self.OUTPUT: None}
+
+    @staticmethod
+    def map_shortest_paths_with_flow_paths(
+        shortest_paths: ShortestPaths,
+        flow_path_profiles: t.Sequence[QgsGeometry],
+        flow_path_profiles_pour_points: t.Sequence[QgsGeometry],
+        feedback: QgsProcessingFeedback | None = None,
+    ) -> c.Generator[QgsGeometry, None, None]:
+        """Maps the flow path profiles with the shortest paths (centerlines).
+
+        This is done using the flow path profile pour points, which coincide
+        with the destination point (the second value in the tuple) of the
+        ShortestPath. Yields N lines merged from the shortest path and the flow
+        path profile which continues "downstream", where N is the length of
+        shortest_paths.
+        """
+
+        def get_matched_flow_path_profile(point: QgsPointXY) -> QgsGeometry:
+            for i, pour_point in enumerate(flow_path_profiles_pour_points):
+                if pour_point.asPoint() == point:
+                    return flow_path_profiles[i]
+            assert False, 'Should not have reached here.'
+
+        for shortest_path in shortest_paths:
+            start, end, path = shortest_path
+            flow_path_profile = get_matched_flow_path_profile(end)
+            flow_path_profile_copy = QgsGeometry(flow_path_profile)
+            assert flow_path_profile_copy.intersects(path)
+            flow_path_profile_copy.addPartGeometry(path)
+            merged = flow_path_profile_copy.mergeLines()
+            merged_endpoints = Endpoints.from_linestring(merged)
+            _flow_path_profile_endpoints = Endpoints.from_linestring(
+                flow_path_profile
+            )
+            assert merged_endpoints[0] == start
+            assert merged_endpoints[1] == _flow_path_profile_endpoints[1]
+            yield merged
