@@ -25,6 +25,8 @@ from ...geometry import (
     Endpoints,
     intersection_points,
     polygon_to_line,
+    remove_duplicated,
+    snap_to_geometry,
 )
 from ...graph import get_shortest_paths
 from ...raster import DEM
@@ -33,9 +35,6 @@ from ...utils import (
     get_first_geometry,
     remove_layers_from_project,
 )
-
-if t.TYPE_CHECKING:
-    from qgis.core import QgsVectorLayer
 
 
 class Layers(Enum):
@@ -52,6 +51,7 @@ class Layers(Enum):
 class EstimateErosionFuture(QgsProcessingAlgorithm):
     GULLY_BOUNDARY = 'GULLY_BOUNDARY'
     GULLY_ELEVATION = 'GULLY_ELEVATION'
+    GULLY_ELEVATION_SINK_REMOVED = 'GULLY_ELEVATION_SINK_REMOVED'
     GULLY_FUTURE_BOUNDARY = 'GULLY_FUTURE_BOUNDARY'
     CENTERLINES = 'CENTERLINES'
     DEBUG_MODE = 'DEBUG_MODE'
@@ -99,6 +99,14 @@ class EstimateErosionFuture(QgsProcessingAlgorithm):
         )
 
         self.addParameter(
+            QgsProcessingParameterBoolean(
+                self.GULLY_ELEVATION_SINK_REMOVED,
+                self.tr('Sink removed?'),
+                False,
+            )
+        )
+
+        self.addParameter(
             QgsProcessingParameterFeatureSource(
                 self.GULLY_FUTURE_BOUNDARY,
                 self.tr('The gully future boundary'),
@@ -119,7 +127,6 @@ class EstimateErosionFuture(QgsProcessingAlgorithm):
             QgsProcessingParameterBoolean(
                 self.DEBUG_MODE,
                 self.tr('Debug mode (more logs and intermediary layers)'),
-                [QgsProcessing.TypeVectorLine],
             )
         )
 
@@ -146,6 +153,10 @@ class EstimateErosionFuture(QgsProcessingAlgorithm):
         gully_elevation = self.parameterAsRasterLayer(
             parameters, self.GULLY_ELEVATION, context
         )
+        gully_elevation_is_sink_removed = self.parameterAsBool(
+            parameters, self.GULLY_ELEVATION_SINK_REMOVED, context
+        )
+        eps = gully_elevation.rasterUnitsPerPixelX()
         gully_future_boundary = self.parameterAsVectorLayer(
             parameters, self.GULLY_FUTURE_BOUNDARY, context
         )
@@ -200,8 +211,7 @@ class EstimateErosionFuture(QgsProcessingAlgorithm):
             first, _ = Endpoints.from_linestring(centerline).as_qgis_geometry()
             if (
                 first.intersects(limit_difference)
-                and first.distance(gully_limit)
-                > gully_elevation.rasterUnitsPerPixelX()
+                and first.distance(gully_limit) > eps
             ):
                 pour_points.append(first)
         if debug_mode:
@@ -236,29 +246,47 @@ class EstimateErosionFuture(QgsProcessingAlgorithm):
             )
             shortest_paths_as_layer.setCrs(crs)
             project.addMapLayer(shortest_paths_as_layer)
-        sink_removed = DEM(gully_elevation).remove_sinks(
-            context, feedback if debug_mode else None
-        )
-        if debug_mode:
-            sink_removed.layer.setName(Layers.DEM_NO_SINKS.name)
-            project.addMapLayer(sink_removed.layer)
+        if not gully_elevation_is_sink_removed:
+            sink_removed = DEM(gully_elevation).remove_sinks(
+                context, feedback if debug_mode else None
+            )
+            if debug_mode:
+                sink_removed.layer.setName(Layers.DEM_NO_SINKS.name)
+                project.addMapLayer(sink_removed.layer)
+        else:
+            sink_removed = DEM(gully_elevation)
         profile_pour_points = [
             QgsGeometry.fromPointXY(path[1]) for path in shortest_paths
         ]
+        profile_pour_points_dedup = remove_duplicated(profile_pour_points)
         if debug_mode:
             profile_pour_points_layer = geometries_to_layer(
-                profile_pour_points,
+                profile_pour_points_dedup,
                 Layers.FLOW_PATH_PROFILE_POUR_POINTS.name,
             )
             profile_pour_points_layer.setCrs(crs)
             project.addMapLayer(profile_pour_points_layer)
-        profiles: QgsVectorLayer = sink_removed.flow_path_profiles_from_points(
-            profile_pour_points,
+
+        profiles = sink_removed.flow_path_profiles_from_points(
+            profile_pour_points_dedup,
             context=context,
             feedback=feedback if debug_mode else None,
         )
+        assert len(profile_pour_points_dedup) == len(
+            profiles
+        ), 'Pour point count does not match flow path profile count.'
+        profiles_snapped = [
+            next(snap_to_geometry([profile], [pour_point], tolerance=eps))
+            for profile, pour_point in zip(profiles, profile_pour_points_dedup)
+        ]
+        for profile_snapped in profiles_snapped:
+            profile_snapped.convertToMultiType()
         if debug_mode:
-            profiles.setName(Layers.FLOW_PATH_PROFILES.name)
-            feedback.pushDebugInfo(str(profiles))
-            project.addMapLayer(profiles)
+            profiles_layer = geometries_to_layer(
+                profiles_snapped, 'profiles_snapped'
+            )
+            profiles_layer.setCrs(project.crs())
+            profiles_layer.setName(Layers.FLOW_PATH_PROFILES.name)
+            feedback.pushDebugInfo(str(profiles_layer))
+            project.addMapLayer(profiles_layer)
         return {self.OUTPUT: None}
