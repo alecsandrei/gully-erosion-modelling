@@ -7,7 +7,7 @@ from pathlib import Path
 
 import processing
 from qgis.analysis import QgsGeometrySnapper
-from qgis.core import Qgis, QgsGeometry, QgsPoint, QgsVectorLayer
+from qgis.core import Qgis, QgsGeometry, QgsPointXY, QgsVectorLayer
 
 from .utils import get_geometries_from_layer
 
@@ -16,8 +16,8 @@ if t.TYPE_CHECKING:
 
 
 class Endpoints(t.NamedTuple):
-    first: QgsPoint
-    last: QgsPoint
+    first: QgsPointXY
+    last: QgsPointXY
 
     @staticmethod
     def from_linestring(linestring: QgsGeometry) -> Endpoints:
@@ -25,12 +25,12 @@ class Endpoints(t.NamedTuple):
         first = next(vertices)
         # Fastest way to drain an iterator
         last = deque(vertices, 1).pop()
-        return Endpoints(first, last)
+        return Endpoints(QgsPointXY(first), QgsPointXY(last))
 
     def as_qgis_geometry(self):
         return (
-            QgsGeometry.fromPoint(self.first),
-            QgsGeometry.fromPoint(self.last),
+            QgsGeometry.fromPointXY(self.first),
+            QgsGeometry.fromPointXY(self.last),
         )
 
 
