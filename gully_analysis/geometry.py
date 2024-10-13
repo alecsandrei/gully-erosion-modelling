@@ -61,6 +61,21 @@ def intersection_points(
     return intersections
 
 
+def remove_duplicated(
+    geometries: c.Sequence[QgsGeometry],
+) -> list[QgsGeometry]:
+    """Returns non-duplicated geometries while keeping the first occurance."""
+    non_duplicated = []
+    for i, geom in enumerate(geometries):
+        if not any(
+            geom.equals(other)
+            for j, other in enumerate(geometries[:i])
+            if j != i
+        ):
+            non_duplicated.append(geom)
+    return non_duplicated
+
+
 class Centerlines(UserList[QgsGeometry]):
     def __init__(self, initlist=None, layer: QgsVectorLayer | None = None):
         self._layer = layer
