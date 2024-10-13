@@ -11,7 +11,7 @@ from qgis.core import (
     QgsRasterLayer,
 )
 
-from .utils import geometries_to_layer
+from .utils import geometries_to_layer, get_geometries_from_path
 
 if t.TYPE_CHECKING:
     from qgis.core import QgsGeometry
@@ -64,7 +64,8 @@ class DEM(Raster):
         points: t.Sequence[QgsGeometry],
         context: QgsProcessingContext | None = None,
         feedback: QgsProcessingFeedback | None = None,
-    ):
+    ) -> list[QgsGeometry]:
+        """Get flow path profiles from pour points."""
         points_as_layer = geometries_to_layer(points, 'pour_points')
         points_as_layer.setCrs(self.layer.crs())
         profiles = processing.run(
@@ -79,15 +80,8 @@ class DEM(Raster):
             context=context,
             feedback=feedback,
         )
-        profiles = list(Path(profiles['LINE']).parent.glob('*.shp'))
-        merged_profiles = processing.run(
-            'native:mergevectorlayers',
-            {
-                'LAYERS': [profile.as_posix() for profile in profiles],
-                'CRS': self.layer.crs(),
-                'OUTPUT': 'TEMPORARY_OUTPUT',
-            },
-            context=context,
-            feedback=feedback,
-        )['OUTPUT']
-        return merged_profiles
+        profiles = sorted(
+            Path(profiles['LINE']).parent.glob('*.shp'),
+            key=lambda path: int(path.stem.replace('LINE', '')),
+        )
+        return list(get_geometries_from_path(*profiles))
