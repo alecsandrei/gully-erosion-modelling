@@ -18,6 +18,10 @@ if t.TYPE_CHECKING:
 
     from qgis.core import QgsGeometry
 
+ExportResult = tuple[
+    QgsVectorFileWriter.WriterError, str | None, str | None, str | None
+]
+
 
 def get_first_geometry(layer: QgsVectorLayer) -> QgsGeometry:
     return layer.getFeature(layer.allFeatureIds()[0]).geometry()
@@ -38,11 +42,6 @@ def get_geometries_from_layer(
     ids = layer.allFeatureIds()
     for id in ids:
         yield layer.getFeature(id).geometry()
-
-
-ExportResult = tuple[
-    QgsVectorFileWriter.WriterError, str | None, str | None, str | None
-]
 
 
 def export(

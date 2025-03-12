@@ -16,7 +16,8 @@ if t.TYPE_CHECKING:
 Path = QgsGeometry
 Start = QgsPointXY
 End = QgsPointXY
-ShortestPaths = list[tuple[Start, End, Path]]
+ShortestPath = tuple[Start, End, Path]
+ShortestPaths = list[ShortestPath]
 
 
 def get_shortest_paths(
