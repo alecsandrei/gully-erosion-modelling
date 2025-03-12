@@ -297,7 +297,7 @@ class EstimateErosionFuture(QgsProcessingAlgorithm):
         mapper = ProfilePathMapper(
             profile_pour_points_dedup, profiles, shortest_paths
         )
-        mapped_profiles = list(mapper.get_mapped_profiles())
+        mapped_profiles = mapper.get_mapped_profiles()
 
         if debug_mode:
             mapped_profiles_layer = geometries_to_layer(
