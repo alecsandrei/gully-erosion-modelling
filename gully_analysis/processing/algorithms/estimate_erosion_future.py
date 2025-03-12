@@ -28,7 +28,6 @@ from ...geometry import (
     intersection_points,
     polygon_to_line,
     remove_duplicated,
-    snap_to_geometry,
 )
 from ...graph import get_shortest_paths
 from ...raster import DEM
@@ -275,28 +274,25 @@ class EstimateErosionFuture(QgsProcessingAlgorithm):
 
         profiles = sink_removed.flow_path_profiles_from_points(
             profile_pour_points_dedup,
+            eps=eps,
             context=context,
             feedback=feedback if debug_mode else None,
         )
-        assert len(profile_pour_points_dedup) == len(
-            profiles
-        ), 'Pour point count does not match flow path profile count.'
-        profiles_snapped = [
-            next(snap_to_geometry([profile], [pour_point], tolerance=eps))
-            for profile, pour_point in zip(profiles, profile_pour_points_dedup)
-        ]
-        for profile_snapped in profiles_snapped:
-            profile_snapped.convertToMultiType()
+        assert len(profile_pour_points_dedup) == len(profiles), (
+            'Pour point count does not match flow path profile count.'
+        )
+        for profile in profiles:
+            profile.convertToMultiType()
         if debug_mode:
             profiles_layer = geometries_to_layer(
-                profiles_snapped, Layers.FLOW_PATH_PROFILES.name
+                profiles, Layers.FLOW_PATH_PROFILES.name
             )
             profiles_layer.setCrs(crs)
             project.addMapLayer(profiles_layer)
         mapped_profiles = list(
             self.map_shortest_paths_with_flow_paths(
                 shortest_paths,
-                profiles_snapped,
+                profiles,
                 profile_pour_points_dedup,
             )
         )

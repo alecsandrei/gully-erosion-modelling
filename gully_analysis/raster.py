@@ -11,6 +11,7 @@ from qgis.core import (
     QgsRasterLayer,
 )
 
+from .geometry import snap_to_geometry
 from .utils import geometries_to_layer, get_geometries_from_path
 
 if t.TYPE_CHECKING:
@@ -62,6 +63,7 @@ class DEM(Raster):
     def flow_path_profiles_from_points(
         self,
         points: t.Sequence[QgsGeometry],
+        eps: float,
         context: QgsProcessingContext | None = None,
         feedback: QgsProcessingFeedback | None = None,
     ) -> list[QgsGeometry]:
@@ -80,8 +82,13 @@ class DEM(Raster):
             context=context,
             feedback=feedback,
         )
-        profiles = sorted(
+        profile_paths = sorted(
             Path(profiles['LINE']).parent.glob('*.shp'),
             key=lambda path: int(path.stem.replace('LINE', '')),
         )
-        return list(get_geometries_from_path(*profiles))
+        profiles = list(get_geometries_from_path(*profile_paths))
+        return [
+            next(snap_to_geometry([profile], [pour_point], tolerance=eps))
+            for profile, pour_point in zip(profiles, points)
+        ]
+        return
