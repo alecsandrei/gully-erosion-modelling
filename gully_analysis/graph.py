@@ -1,19 +1,60 @@
 from __future__ import annotations
 
+import collections.abc as c
 import itertools
 import typing as t
+from dataclasses import dataclass
 
 from qgis.analysis import (
     QgsGraphAnalyzer,
     QgsGraphBuilder,
     QgsVectorLayerDirector,
 )
-from qgis.core import QgsGeometry, QgsPointXY
+from qgis.core import Qgis, QgsGeometry, QgsPoint, QgsPointXY
 
+from .geometry import Endpoints
 from .utils import get_geometries_from_layer
 
 if t.TYPE_CHECKING:
     from qgis.core import QgsProcessingFeedback, QgsVectorLayer
+
+
+@dataclass
+class ProfilePathMapper:
+    profile_pour_points: c.Sequence[QgsGeometry]
+    profiles: c.Sequence[QgsGeometry]
+    shortest_paths: c.Sequence[ShortestPath]
+
+    def get_mapped_profiles(self) -> c.Generator[QgsGeometry]:
+        """Maps the flow path profiles with the shortest paths (centerlines).
+
+        This is done using the flow path profile pour points, which coincide
+        with the destination point (the second value in the tuple) of the
+        ShortestPath. Yields N lines merged from the shortest path and the flow
+        path profile which continues "downstream", where N is the length of
+        shortest_paths.
+        """
+
+        def get_matched_flow_path_profile(point: QgsPointXY) -> QgsGeometry:
+            for i, pour_point in enumerate(self.profile_pour_points):
+                if pour_point.asPoint() == point:
+                    return self.profiles[i]
+            assert False, 'Should not have reached here.'
+
+        for shortest_path in self.shortest_paths:
+            start, end, path = shortest_path
+            flow_path_profile = get_matched_flow_path_profile(end)
+            flow_path_profile_copy = QgsGeometry(flow_path_profile)
+            assert flow_path_profile_copy.intersects(path)
+            flow_path_profile_copy.addPartGeometry(path)
+            merged = flow_path_profile_copy.mergeLines()
+            merged_endpoints = Endpoints.from_linestring(merged)
+            _flow_path_profile_endpoints = Endpoints.from_linestring(
+                flow_path_profile
+            )
+            assert merged_endpoints[0] == start
+            assert merged_endpoints[1] == _flow_path_profile_endpoints[1]
+            yield merged
 
 
 class ShortestPath(t.NamedTuple):

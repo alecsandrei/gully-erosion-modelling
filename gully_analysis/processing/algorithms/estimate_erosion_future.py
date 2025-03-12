@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import collections.abc as c
 import typing as t
 from enum import Enum, auto
 from pathlib import Path
@@ -8,7 +7,6 @@ from pathlib import Path
 from qgis.core import (
     Qgis,
     QgsGeometry,
-    QgsPointXY,
     QgsProcessing,
     QgsProcessingAlgorithm,
     QgsProcessingContext,
@@ -29,16 +27,13 @@ from ...geometry import (
     polygon_to_line,
     remove_duplicated,
 )
-from ...graph import get_shortest_paths
+from ...graph import ProfilePathMapper, get_shortest_paths
 from ...raster import DEM
 from ...utils import (
     geometries_to_layer,
     get_first_geometry,
     remove_layers_from_project,
 )
-
-if t.TYPE_CHECKING:
-    from ...graph import ShortestPaths
 
 
 class Layers(Enum):
@@ -289,13 +284,11 @@ class EstimateErosionFuture(QgsProcessingAlgorithm):
             )
             profiles_layer.setCrs(crs)
             project.addMapLayer(profiles_layer)
-        mapped_profiles = list(
-            self.map_shortest_paths_with_flow_paths(
-                shortest_paths,
-                profiles,
-                profile_pour_points_dedup,
-            )
+        mapper = ProfilePathMapper(
+            profile_pour_points_dedup, profiles, shortest_paths
         )
+        mapped_profiles = list(mapper.get_mapped_profiles())
+
         if debug_mode:
             mapped_profiles_layer = geometries_to_layer(
                 mapped_profiles, name=Layers.MAPPED_PROFILES.name
@@ -303,39 +296,3 @@ class EstimateErosionFuture(QgsProcessingAlgorithm):
             mapped_profiles_layer.setCrs(crs)
             project.addMapLayer(mapped_profiles_layer)
         return {self.OUTPUT: None}
-
-    @staticmethod
-    def map_shortest_paths_with_flow_paths(
-        shortest_paths: ShortestPaths,
-        flow_path_profiles: t.Sequence[QgsGeometry],
-        flow_path_profiles_pour_points: t.Sequence[QgsGeometry],
-    ) -> c.Generator[QgsGeometry, None, None]:
-        """Maps the flow path profiles with the shortest paths (centerlines).
-
-        This is done using the flow path profile pour points, which coincide
-        with the destination point (the second value in the tuple) of the
-        ShortestPath. Yields N lines merged from the shortest path and the flow
-        path profile which continues "downstream", where N is the length of
-        shortest_paths.
-        """
-
-        def get_matched_flow_path_profile(point: QgsPointXY) -> QgsGeometry:
-            for i, pour_point in enumerate(flow_path_profiles_pour_points):
-                if pour_point.asPoint() == point:
-                    return flow_path_profiles[i]
-            assert False, 'Should not have reached here.'
-
-        for shortest_path in shortest_paths:
-            start, end, path = shortest_path
-            flow_path_profile = get_matched_flow_path_profile(end)
-            flow_path_profile_copy = QgsGeometry(flow_path_profile)
-            assert flow_path_profile_copy.intersects(path)
-            flow_path_profile_copy.addPartGeometry(path)
-            merged = flow_path_profile_copy.mergeLines()
-            merged_endpoints = Endpoints.from_linestring(merged)
-            _flow_path_profile_endpoints = Endpoints.from_linestring(
-                flow_path_profile
-            )
-            assert merged_endpoints[0] == start
-            assert merged_endpoints[1] == _flow_path_profile_endpoints[1]
-            yield merged
