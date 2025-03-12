@@ -114,7 +114,8 @@ class ProfilePathMapper:
         return merged_lines
 
 
-class ShortestPath(t.NamedTuple):
+@dataclass
+class ShortestPath:
     start: QgsPointXY
     end: QgsPointXY
     path: QgsGeometry
