@@ -251,7 +251,8 @@ class EstimateErosionFuture(QgsProcessingAlgorithm):
             feedback.pushDebugInfo('Graph built.')
         if debug_mode:
             shortest_paths_as_layer = geometries_to_layer(
-                [line[2] for line in shortest_paths], Layers.SHORTEST_PATHS.name
+                [line.path for line in shortest_paths],
+                Layers.SHORTEST_PATHS.name,
             )
             shortest_paths_as_layer.setCrs(crs)
             project.addMapLayer(shortest_paths_as_layer)
