@@ -135,7 +135,6 @@ def get_shortest_paths(
     The shortest path is the path from the start point to the closest
     destination point in the network.
     """
-    qgs_lines = list(get_geometries_from_layer(lines))
     # TODO: find a faster way to compute this
     director = QgsVectorLayerDirector(
         lines, -1, '', '', '', QgsVectorLayerDirector.Direction.DirectionBoth
