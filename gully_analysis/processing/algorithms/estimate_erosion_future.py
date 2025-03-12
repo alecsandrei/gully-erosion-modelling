@@ -221,6 +221,15 @@ class EstimateErosionFuture(QgsProcessingAlgorithm):
             pour_points_layer.setCrs(crs)
             project.addMapLayer(pour_points_layer)
 
+        centerlines_valid = [
+            centerline
+            for centerline in centerlines
+            if not centerline.isEmpty() and centerline.isGeosValid()
+        ]
+        centerlines_valid_layer = geometries_to_layer(
+            centerlines_valid, 'CENTERLINES'
+        )
+        centerlines = Centerlines(centerlines_valid, centerlines_valid_layer)
         points_intersecting_gully_boundary = intersection_points(
             centerlines, gully_polygon
         )
