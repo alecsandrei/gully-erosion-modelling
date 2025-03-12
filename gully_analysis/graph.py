@@ -10,10 +10,9 @@ from qgis.analysis import (
     QgsGraphBuilder,
     QgsVectorLayerDirector,
 )
-from qgis.core import Qgis, QgsGeometry, QgsPoint, QgsPointXY
+from qgis.core import Qgis, QgsGeometry, QgsPointXY
 
 from .geometry import Endpoints
-from .utils import get_geometries_from_layer
 
 if t.TYPE_CHECKING:
     from qgis.core import QgsProcessingFeedback, QgsVectorLayer
@@ -21,40 +20,98 @@ if t.TYPE_CHECKING:
 
 @dataclass
 class ProfilePathMapper:
-    profile_pour_points: c.Sequence[QgsGeometry]
-    profiles: c.Sequence[QgsGeometry]
-    shortest_paths: c.Sequence[ShortestPath]
+    profile_pour_points: c.MutableSequence[QgsGeometry]
+    profiles: list[QgsGeometry]
+    shortest_paths: list[ShortestPath]
 
-    def get_mapped_profiles(self) -> c.Generator[QgsGeometry]:
+    def fix_shortest_path_if_intersects(
+        self, shortest_path: ShortestPath
+    ) -> bool:
+        """The shortest path can intersect the profile multiple times.
+
+        This function stops the shortest path at the first intersection with the
+        longitudinal profile.
+        """
+        intersecting_lines = [
+            line
+            for line in self.profiles
+            if Endpoints.from_linestring(line).first == shortest_path.end
+        ]
+        if len(intersecting_lines) != 1:
+            if len(intersecting_lines) > 1:
+                print('Error: expected at most one intersecting line.')
+            return False
+        intersecting_line = intersecting_lines[0]
+        intersection = intersecting_line.intersection(shortest_path.path)
+        if intersection.wkbType() != Qgis.WkbType.MultiPoint:
+            return False
+        point_intersections = intersection.coerceToType(Qgis.WkbType.Point)
+        intersection_point: QgsPointXY = [
+            point.asPoint()
+            for point in point_intersections
+            if point.asPoint() != shortest_path.end
+        ][0]
+        shortest_path.path.splitGeometry([intersection_point], False)
+        shortest_path.path = shortest_path.path.coerceToType(
+            Qgis.WkbType.LineString
+        )[0]
+        shortest_path.end = intersection_point
+        return True
+
+    def get_mapped_profiles(self) -> list[QgsGeometry]:
         """Maps the flow path profiles with the shortest paths (centerlines).
 
         This is done using the flow path profile pour points, which coincide
         with the destination point (the second value in the tuple) of the
-        ShortestPath. Yields N lines merged from the shortest path and the flow
+        ShortestPath. Returns N lines merged from the shortest path and the flow
         path profile which continues "downstream", where N is the length of
         shortest_paths.
         """
 
         def get_matched_flow_path_profile(point: QgsPointXY) -> QgsGeometry:
+            pour_point = None
             for i, pour_point in enumerate(self.profile_pour_points):
                 if pour_point.asPoint() == point:
                     return self.profiles[i]
-            assert False, 'Should not have reached here.'
+            raise Exception(
+                f'Should not have reached here: {pour_point, point}'
+            )
 
-        for shortest_path in self.shortest_paths:
-            start, end, path = shortest_path
-            flow_path_profile = get_matched_flow_path_profile(end)
+        merged_lines = []
+        for i, shortest_path in enumerate(self.shortest_paths):
+            flow_path_profile = get_matched_flow_path_profile(shortest_path.end)
+            updated = self.fix_shortest_path_if_intersects(shortest_path)
             flow_path_profile_copy = QgsGeometry(flow_path_profile)
-            assert flow_path_profile_copy.intersects(path)
-            flow_path_profile_copy.addPartGeometry(path)
+            assert flow_path_profile_copy.intersects(shortest_path.path)
+            if updated:
+                # stubs say it is a List[QgsPoint] | List[QgsPointXY],
+                # but a QgsGeometry is actually returned
+                splitted_line = t.cast(
+                    QgsGeometry,
+                    flow_path_profile_copy.splitGeometry(
+                        [shortest_path.end], False
+                    )[1][0],
+                )
+                flow_path_profile_copy = splitted_line.coerceToType(
+                    Qgis.WkbType.LineString
+                )[0]
+                assert not flow_path_profile_copy.isMultipart()
+            flow_path_profile_copy.addPartGeometry(shortest_path.path)
             merged = flow_path_profile_copy.mergeLines()
             merged_endpoints = Endpoints.from_linestring(merged)
             _flow_path_profile_endpoints = Endpoints.from_linestring(
                 flow_path_profile
             )
-            assert merged_endpoints[0] == start
-            assert merged_endpoints[1] == _flow_path_profile_endpoints[1]
-            yield merged
+            assert merged_endpoints[0] == shortest_path.start, (
+                merged_endpoints[0],
+                shortest_path.start,
+            )
+            assert merged_endpoints[1] == _flow_path_profile_endpoints[1], (
+                merged_endpoints[1],
+                _flow_path_profile_endpoints[1],
+            )
+            merged_lines.append(merged)
+        return merged_lines
 
 
 class ShortestPath(t.NamedTuple):
