@@ -261,7 +261,7 @@ class EstimateErosionFuture(QgsProcessingAlgorithm):
         else:
             sink_removed = DEM(gully_elevation)
         profile_pour_points = [
-            QgsGeometry.fromPointXY(path[1]) for path in shortest_paths
+            QgsGeometry.fromPointXY(path.end) for path in shortest_paths
         ]
         profile_pour_points_dedup = remove_duplicated(profile_pour_points)
         if debug_mode:

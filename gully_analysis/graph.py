@@ -10,13 +10,18 @@ from qgis.analysis import (
 )
 from qgis.core import QgsGeometry, QgsPointXY
 
+from .utils import get_geometries_from_layer
+
 if t.TYPE_CHECKING:
     from qgis.core import QgsProcessingFeedback, QgsVectorLayer
 
-Path = QgsGeometry
-Start = QgsPointXY
-End = QgsPointXY
-ShortestPath = tuple[Start, End, Path]
+
+class ShortestPath(t.NamedTuple):
+    start: QgsPointXY
+    end: QgsPointXY
+    path: QgsGeometry
+
+
 ShortestPaths = list[ShortestPath]
 
 
@@ -31,6 +36,7 @@ def get_shortest_paths(
     The shortest path is the path from the start point to the closest
     destination point in the network.
     """
+    qgs_lines = list(get_geometries_from_layer(lines))
     # TODO: find a faster way to compute this
     director = QgsVectorLayerDirector(
         lines, -1, '', '', '', QgsVectorLayerDirector.Direction.DirectionBoth
@@ -79,11 +85,11 @@ def get_shortest_paths(
         if shortest_route:
             assert route_end_point is not None
             shortest_paths.append(
-                (
+                ShortestPath(
                     tied_start_point,
                     route_end_point,
                     QgsGeometry.fromPolylineXY(shortest_route),
-                )
+                ),
             )
 
     return shortest_paths
