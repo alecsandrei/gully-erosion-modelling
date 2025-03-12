@@ -7,7 +7,12 @@ from pathlib import Path
 
 import processing
 from qgis.analysis import QgsGeometrySnapper
-from qgis.core import Qgis, QgsGeometry, QgsPointXY, QgsVectorLayer
+from qgis.core import (
+    Qgis,
+    QgsGeometry,
+    QgsPointXY,
+    QgsVectorLayer,
+)
 
 from .utils import get_geometries_from_layer
 
@@ -24,6 +29,8 @@ class Endpoints(t.NamedTuple):
         vertices = linestring.vertices()
         first = next(vertices)
         # Fastest way to drain an iterator
+        if not vertices.hasNext():
+            raise ValueError('Linestring only has one vertex.')
         last = deque(vertices, 1).pop()
         return Endpoints(QgsPointXY(first), QgsPointXY(last))
 
@@ -51,11 +58,11 @@ def intersection_points(
         if intersection.isEmpty():
             continue
         # It could be a MultiPoint.
-        point_list = intersection.coerceToType(Qgis.WkbType.Point)
         expected = (Qgis.WkbType.Point, Qgis.WkbType.MultiPoint)
         error = check_incorrect_geometry(expected, intersections)
         if error:
             raise error
+        point_list = intersection.coerceToType(Qgis.WkbType.Point)
         for intersection in point_list:
             if intersection.constGet() not in endpoints:
                 intersections.append(intersection)
