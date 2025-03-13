@@ -19,6 +19,7 @@ from qgis.core import (
 )
 from qgis.PyQt.QtCore import QCoreApplication  # type: ignore
 
+from ...changepoint import aggregate_samples, get_estimated_samples
 from ...enums import Algorithm, AlgorithmGroup
 from ...geometry import (
     Centerlines,
@@ -28,7 +29,12 @@ from ...geometry import (
     remove_duplicated,
 )
 from ...graph import ProfilePathMapper, get_shortest_paths
-from ...raster import DEM
+from ...raster import (
+    DEM,
+    Evaluator,
+    inverse_distance_weighted,
+    multilevel_b_spline,
+)
 from ...utils import (
     geometries_to_layer,
     get_first_geometry,
@@ -46,13 +52,18 @@ class Layers(Enum):
     POINTS_INTERSECTING_GULLY = auto()
     FLOW_PATH_PROFILE_POUR_POINTS = auto()
     MAPPED_PROFILES = auto()
+    SAMPLES = auto()
+    INTERPOLATED_DEM = auto()
+    GULLY_COVER = auto()
 
 
 class EstimateErosionFuture(QgsProcessingAlgorithm):
     GULLY_BOUNDARY = 'GULLY_BOUNDARY'
     GULLY_ELEVATION = 'GULLY_ELEVATION'
     GULLY_ELEVATION_SINK_REMOVED = 'GULLY_ELEVATION_SINK_REMOVED'
+    GULLY_FUTURE_ELEVATION = 'GULLY_FUTURE_ELEVATION'
     GULLY_FUTURE_BOUNDARY = 'GULLY_FUTURE_BOUNDARY'
+    ESTIMATION_SURFACE = 'ESTIMATION_SURFACE'
     CENTERLINES = 'CENTERLINES'
     DEBUG_MODE = 'DEBUG_MODE'
     OUTPUT = 'OUTPUT'
@@ -107,13 +118,29 @@ class EstimateErosionFuture(QgsProcessingAlgorithm):
         )
 
         self.addParameter(
+            QgsProcessingParameterRasterLayer(
+                self.GULLY_FUTURE_ELEVATION,
+                self.tr('The gully elevation future raster'),
+                optional=True,
+            )
+        )
+
+        self.addParameter(
             QgsProcessingParameterFeatureSource(
                 self.GULLY_FUTURE_BOUNDARY,
                 self.tr('The gully future boundary'),
                 [QgsProcessing.TypeVectorPolygon],
             )
         )
-
+        self.addParameter(
+            QgsProcessingParameterFeatureSource(
+                self.ESTIMATION_SURFACE,
+                self.tr(
+                    'The area where the estimation is going to be calculated'
+                ),
+                [QgsProcessing.TypeVectorPolygon],
+            )
+        )
         self.addParameter(
             QgsProcessingParameterFeatureSource(
                 self.CENTERLINES,
@@ -150,13 +177,23 @@ class EstimateErosionFuture(QgsProcessingAlgorithm):
         gully_boundary = self.parameterAsVectorLayer(
             parameters, self.GULLY_BOUNDARY, context
         )
-        gully_elevation = self.parameterAsRasterLayer(
-            parameters, self.GULLY_ELEVATION, context
+        estimation_surface = self.parameterAsVectorLayer(
+            parameters, self.ESTIMATION_SURFACE, context
         )
+        gully_elevation = DEM(
+            self.parameterAsRasterLayer(
+                parameters, self.GULLY_ELEVATION, context
+            )
+        )
+        gully_future_elevation = DEM(
+            self.parameterAsRasterLayer(
+                parameters, self.GULLY_FUTURE_ELEVATION, context
+            )
+        ).align_to(gully_elevation)
         gully_elevation_is_sink_removed = self.parameterAsBool(
             parameters, self.GULLY_ELEVATION_SINK_REMOVED, context
         )
-        eps = gully_elevation.rasterUnitsPerPixelX()
+        cell_size = gully_elevation.layer.rasterUnitsPerPixelX()
         gully_future_boundary = self.parameterAsVectorLayer(
             parameters, self.GULLY_FUTURE_BOUNDARY, context
         )
@@ -173,6 +210,7 @@ class EstimateErosionFuture(QgsProcessingAlgorithm):
         gully_future_polygon = get_first_geometry(
             gully_future_boundary
         ).coerceToType(Qgis.WkbType.Polygon)[0]
+        gully_future_limit = polygon_to_line(gully_future_polygon)
 
         difference = gully_future_polygon.difference(gully_polygon)
         if debug_mode:
@@ -211,7 +249,7 @@ class EstimateErosionFuture(QgsProcessingAlgorithm):
             first, _ = Endpoints.from_linestring(centerline).as_qgis_geometry()
             if (
                 first.intersects(limit_difference)
-                and first.distance(gully_limit) > eps
+                and first.distance(gully_limit) > cell_size
             ):
                 pour_points.append(first)
         if debug_mode:
@@ -231,7 +269,7 @@ class EstimateErosionFuture(QgsProcessingAlgorithm):
         )
         centerlines = Centerlines(centerlines_valid, centerlines_valid_layer)
         points_intersecting_gully_boundary = intersection_points(
-            centerlines, gully_polygon
+            centerlines, gully_polygon, 0
         )
         if debug_mode:
             points_intersecting_gully_layer = geometries_to_layer(
@@ -245,7 +283,7 @@ class EstimateErosionFuture(QgsProcessingAlgorithm):
             pour_points,
             centerlines._layer,
             points_intersecting_gully_boundary,
-            feedback,
+            feedback=feedback,
         )
         if debug_mode:
             feedback.pushDebugInfo('Graph built.')
@@ -257,14 +295,15 @@ class EstimateErosionFuture(QgsProcessingAlgorithm):
             shortest_paths_as_layer.setCrs(crs)
             project.addMapLayer(shortest_paths_as_layer)
         if not gully_elevation_is_sink_removed:
-            sink_removed = DEM(gully_elevation).remove_sinks(
+            sink_removed = gully_elevation.remove_sinks(
                 context, feedback if debug_mode else None
             )
             if debug_mode:
                 sink_removed.layer.setName(Layers.DEM_NO_SINKS.name)
                 project.addMapLayer(sink_removed.layer)
         else:
-            sink_removed = DEM(gully_elevation)
+            sink_removed = gully_elevation
+        sink_removed.layer.setCrs(crs)
         profile_pour_points = [
             QgsGeometry.fromPointXY(path.end) for path in shortest_paths
         ]
@@ -279,7 +318,7 @@ class EstimateErosionFuture(QgsProcessingAlgorithm):
 
         profiles = sink_removed.flow_path_profiles_from_points(
             profile_pour_points_dedup,
-            eps=eps,
+            eps=cell_size,
             context=context,
             feedback=feedback if debug_mode else None,
         )
@@ -301,8 +340,78 @@ class EstimateErosionFuture(QgsProcessingAlgorithm):
 
         if debug_mode:
             mapped_profiles_layer = geometries_to_layer(
-                mapped_profiles, name=Layers.MAPPED_PROFILES.name
+                [profile['mapped'] for profile in mapped_profiles],
+                name=Layers.MAPPED_PROFILES.name,
             )
             mapped_profiles_layer.setCrs(crs)
             project.addMapLayer(mapped_profiles_layer)
+
+        samples = get_estimated_samples(
+            sink_removed,
+            gully_future_elevation.remove_sinks(),
+            [profiles[profile['profile_index']] for profile in mapped_profiles],
+            [profile['mapped'] for profile in mapped_profiles],
+            gully_future_limit,
+            context=context,
+            feedback=feedback,
+        )
+        aggregated = aggregate_samples(samples.estimated)
+        if debug_mode:
+            aggregated.setCrs(crs)
+            aggregated.setName(Layers.SAMPLES.name)
+            project.addMapLayer(aggregated)
+        gully_elevation.layer.setCrs(crs)
+        gully_future_elevation.layer.setCrs(crs)
+        interpolated_dem = (
+            multilevel_b_spline(
+                aggregated,
+                cell_size,
+                context=context,
+                feedback=feedback,
+            )
+            .align_to(gully_elevation)
+            .apply_mask(gully_future_boundary)
+        )
+        if debug_mode:
+            interpolated_dem.layer.setCrs(crs)
+            interpolated_dem.layer.setName(Layers.INTERPOLATED_DEM.name)
+            project.addMapLayer(interpolated_dem.layer)
+        gully_cover = (
+            inverse_distance_weighted(
+                samples.boundary,
+                cell_size,
+                context=context,
+                feedback=feedback,
+            )
+            .align_to(gully_elevation)
+            .apply_mask(gully_future_boundary)
+        )
+        if debug_mode:
+            gully_cover.layer.setCrs(crs)
+            gully_cover.layer.setName(Layers.GULLY_COVER.name)
+            project.addMapLayer(gully_cover.layer)
+
+        gully_elevation_masked = gully_elevation.apply_mask(
+            gully_future_boundary
+        )
+        gully_future_elevation_masked = gully_future_elevation.apply_mask(
+            gully_future_boundary
+        )
+        # gully_elevation_masked.layer.setName('gully_elevation_masked')
+        # gully_future_elevation_masked.layer.setName(
+        #     'gully_future_elevation_masked'
+        # )
+        # gully_cover.layer.setName('gully_cover')
+        # interpolated_dem.layer.setName('interpolated_dem')
+        # project.addMapLayer(gully_elevation_masked.layer)
+        # project.addMapLayer(gully_future_elevation_masked.layer)
+
+        Evaluator(
+            gully_elevation_masked,
+            interpolated_dem,
+            gully_future_elevation_masked,
+            gully_cover,
+            estimation_surface,
+        ).evaluate(feedback)
+
         return {self.OUTPUT: None}

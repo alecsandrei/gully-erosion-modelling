@@ -66,8 +66,9 @@ def remove_layers_from_project(
         # NOTE: I also tried removeMapLayers to avoid
         # a for loop but I was getting
         # TypeError: index 0 has type 'QgsVectorLayer' but 'str' is expected
-
-        project.removeMapLayer(map_layer.id())
+        if not map_layer.isValid():
+            continue
+        project.removeMapLayers([map_layer.id()])
 
 
 def geometries_to_layer(

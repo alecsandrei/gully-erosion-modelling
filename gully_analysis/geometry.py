@@ -28,9 +28,9 @@ class Endpoints(t.NamedTuple):
     def from_linestring(linestring: QgsGeometry) -> Endpoints:
         vertices = linestring.vertices()
         first = next(vertices)
-        # Fastest way to drain an iterator
         if not vertices.hasNext():
             raise ValueError('Linestring only has one vertex.')
+        # Fastest way to drain an iterator
         last = deque(vertices, 1).pop()
         return Endpoints(QgsPointXY(first), QgsPointXY(last))
 
@@ -42,7 +42,7 @@ class Endpoints(t.NamedTuple):
 
 
 def intersection_points(
-    lines: c.Iterable[QgsGeometry], polygon: QgsGeometry
+    lines: c.Iterable[QgsGeometry], polygon: QgsGeometry, tolerance: float
 ) -> list[QgsGeometry]:
     """
     Finds the intersection points between the lines and the polygon exterior.
@@ -119,7 +119,7 @@ class Centerlines(UserList[QgsGeometry]):
             'grass:v.voronoi.skeleton',
             {
                 'input': geometry_fixed,
-                'smoothness': 0.1,
+                'smoothness': 1,
                 'thin': 1,
                 '-a': False,
                 '-s': True,

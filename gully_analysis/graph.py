@@ -18,11 +18,16 @@ if t.TYPE_CHECKING:
     from qgis.core import QgsProcessingFeedback, QgsVectorLayer
 
 
+class MappedProfile(t.TypedDict):
+    profile_index: int
+    mapped: QgsGeometry
+
+
 @dataclass
 class ProfilePathMapper:
-    profile_pour_points: c.MutableSequence[QgsGeometry]
-    profiles: list[QgsGeometry]
-    shortest_paths: list[ShortestPath]
+    profile_pour_points: c.Sequence[QgsGeometry]
+    profiles: c.Sequence[QgsGeometry]
+    shortest_paths: c.Sequence[ShortestPath]
 
     def fix_shortest_path_if_intersects(
         self, shortest_path: ShortestPath
@@ -58,7 +63,7 @@ class ProfilePathMapper:
         shortest_path.end = intersection_point
         return True
 
-    def get_mapped_profiles(self) -> list[QgsGeometry]:
+    def get_mapped_profiles(self) -> list[MappedProfile]:
         """Maps the flow path profiles with the shortest paths (centerlines).
 
         This is done using the flow path profile pour points, which coincide
@@ -68,18 +73,22 @@ class ProfilePathMapper:
         shortest_paths.
         """
 
-        def get_matched_flow_path_profile(point: QgsPointXY) -> QgsGeometry:
+        def get_matched_flow_path_profile(
+            point: QgsPointXY,
+        ) -> tuple[int, QgsGeometry]:
             pour_point = None
             for i, pour_point in enumerate(self.profile_pour_points):
                 if pour_point.asPoint() == point:
-                    return self.profiles[i]
+                    return (i, self.profiles[i])
             raise Exception(
                 f'Should not have reached here: {pour_point, point}'
             )
 
-        merged_lines = []
-        for i, shortest_path in enumerate(self.shortest_paths):
-            flow_path_profile = get_matched_flow_path_profile(shortest_path.end)
+        mapped_profiles: list[MappedProfile] = []
+        for shortest_path in self.shortest_paths:
+            flow_path_profile_index, flow_path_profile = (
+                get_matched_flow_path_profile(shortest_path.end)
+            )
             updated = self.fix_shortest_path_if_intersects(shortest_path)
             flow_path_profile_copy = QgsGeometry(flow_path_profile)
             assert flow_path_profile_copy.intersects(shortest_path.path)
@@ -99,19 +108,24 @@ class ProfilePathMapper:
             flow_path_profile_copy.addPartGeometry(shortest_path.path)
             merged = flow_path_profile_copy.mergeLines()
             merged_endpoints = Endpoints.from_linestring(merged)
-            _flow_path_profile_endpoints = Endpoints.from_linestring(
+            flow_path_profile_endpoints = Endpoints.from_linestring(
                 flow_path_profile
             )
             assert merged_endpoints[0] == shortest_path.start, (
                 merged_endpoints[0],
                 shortest_path.start,
             )
-            assert merged_endpoints[1] == _flow_path_profile_endpoints[1], (
+            assert merged_endpoints[1] == flow_path_profile_endpoints[1], (
                 merged_endpoints[1],
-                _flow_path_profile_endpoints[1],
+                flow_path_profile_endpoints[1],
             )
-            merged_lines.append(merged)
-        return merged_lines
+            mapped_profiles.append(
+                {
+                    'profile_index': flow_path_profile_index,
+                    'mapped': merged,
+                }
+            )
+        return mapped_profiles
 
 
 @dataclass
@@ -128,6 +142,7 @@ def get_shortest_paths(
     start_points: list[QgsGeometry],
     lines: QgsVectorLayer,
     destination_points: list[QgsGeometry],
+    tolerance: float = 0.0001,
     feedback: QgsProcessingFeedback | None = None,
 ) -> ShortestPaths:
     """Computes shortest paths from the start points to the destination points.
@@ -139,7 +154,7 @@ def get_shortest_paths(
     director = QgsVectorLayerDirector(
         lines, -1, '', '', '', QgsVectorLayerDirector.Direction.DirectionBoth
     )
-    builder = QgsGraphBuilder(lines.crs())
+    builder = QgsGraphBuilder(lines.crs(), topologyTolerance=tolerance)
 
     start_points_as_xy = map(QgsGeometry.asPoint, start_points)
     destination_points_as_xy = map(QgsGeometry.asPoint, destination_points)
