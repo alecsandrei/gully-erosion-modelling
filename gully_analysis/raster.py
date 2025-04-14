@@ -18,7 +18,7 @@ from .geometry import snap_to_geometry
 from .utils import geometries_to_layer, get_geometries_from_path
 
 if t.TYPE_CHECKING:
-    from qgis.core import QgsGeometry
+    from qgis.core import QgsCoordinateReferenceSystem, QgsGeometry
 
 
 class Extent(t.NamedTuple):
@@ -57,29 +57,59 @@ T = t.TypeVar('T', bound='Raster')
 class Raster:
     layer: QgsRasterLayer
 
-    def __sub__(self, other: Raster) -> Raster:
+    def __sub__(self: T, other: T) -> T:
         return self.difference(other)
 
     def difference(self: T, other: Raster) -> T:
         return type(self)(
-            processing.run(
-                'sagang:rasterdifference',
-                {'A': self.layer, 'B': other.layer, 'C': 'TEMPORARY_OUTPUT'},
-            )['C']
+            QgsRasterLayer(
+                processing.run(
+                    'native:rastercalc',
+                    {
+                        'LAYERS': [
+                            self.layer,
+                            other.layer,
+                        ],
+                        'EXPRESSION': f'"{self.layer.name()}@1"-"{other.layer.name()}@1"',
+                        'EXTENT': None,
+                        'CELL_SIZE': None,
+                        'CRS': None,
+                        'OUTPUT': 'TEMPORARY_OUTPUT',
+                    },
+                )['OUTPUT'],
+                self.layer.name(),
+                'gdal',
+            )
         )
+
 
     @property
     def extent(self) -> Extent:
         return Extent.from_raster(self.layer)
 
-    def apply_mask(self: T, mask: QgsVectorLayer) -> T:
+    def apply_mask(
+        self: T, mask: QgsVectorLayer, output: str = 'TEMPORARY_OUTPUT'
+    ) -> T:
         masked = processing.run(
-            'sagang:cliprasterwithpolygon',
+            'gdal:cliprasterbymasklayer',
             {
                 'INPUT': self.layer,
-                'OUTPUT': 'TEMPORARY_OUTPUT',
-                'POLYGONS': mask,
-                'EXTENT': 1,
+                'MASK': mask,
+                'SOURCE_CRS': self.layer.crs(),
+                'TARGET_CRS': self.layer.crs(),
+                'TARGET_EXTENT': None,
+                'NODATA': None,
+                'ALPHA_BAND': False,
+                'CROP_TO_CUTLINE': True,
+                'KEEP_RESOLUTION': False,
+                'SET_RESOLUTION': False,
+                'X_RESOLUTION': None,
+                'Y_RESOLUTION': None,
+                'MULTITHREADING': False,
+                'OPTIONS': None,
+                'DATA_TYPE': 0,
+                'EXTRA': '',
+                'OUTPUT': output,
             },
         )
         return type(self)(
@@ -91,6 +121,7 @@ class Raster:
         raster: Raster,
         context: QgsProcessingContext | None = None,
         feedback: QgsProcessingFeedback | None = None,
+        output: str = 'TEMPORARY_OUTPUT',
     ) -> T:
         aligned = processing.run(
             'gdal:warpreproject',
@@ -107,7 +138,7 @@ class Raster:
                 'TARGET_EXTENT_CRS': None,
                 'MULTITHREADING': False,
                 'EXTRA': '',
-                'OUTPUT': 'TEMPORARY_OUTPUT',
+                'OUTPUT': output,
             },
             context=context,
             feedback=feedback,
@@ -116,25 +147,74 @@ class Raster:
             QgsRasterLayer(aligned['OUTPUT'], self.layer.name(), 'gdal')
         )
 
-    def volume(self) -> float:
-        feedback = QgsProcessingFeedback()
-        processing.run(
-            'sagang:rastervolume',
-            {'GRID': self.layer, 'METHOD': 0, 'LEVEL': 3},
-            feedback=feedback,
+    def raster_volume(self: T) -> T:
+        cell_area = (
+            self.layer.rasterUnitsPerPixelX()
+            * self.layer.rasterUnitsPerPixelY()
+        )
+        return type(self)(
+            QgsRasterLayer(
+                processing.run(
+                    'gdal:rastercalculator',
+                    {
+                        'INPUT_A': self.layer,
+                        'BAND_A': 1,
+                        'INPUT_B': None,
+                        'BAND_B': None,
+                        'INPUT_C': None,
+                        'BAND_C': None,
+                        'INPUT_D': None,
+                        'BAND_D': None,
+                        'INPUT_E': None,
+                        'BAND_E': None,
+                        'INPUT_F': None,
+                        'BAND_F': None,
+                        'FORMULA': f'A*{cell_area}',
+                        'NO_DATA': None,
+                        'EXTENT_OPT': 0,
+                        'PROJWIN': None,
+                        'RTYPE': 5,
+                        'OPTIONS': '',
+                        'EXTRA': '',
+                        'OUTPUT': 'TEMPORARY_OUTPUT',
+                    },
+                )['OUTPUT'],
+                self.layer.name(),
+                'gdal',
+            )
         )
 
-        log = feedback.textLog().splitlines()
+    def get_raster_surface_volume(self) -> float:
+        feedback = QgsProcessingFeedback()
+        results = processing.run(
+            'native:rastersurfacevolume',
+            {
+                'INPUT': self.layer,
+                'BAND': 1,
+                'LEVEL': 0,
+                'METHOD': 0,
+                'OUTPUT_HTML_FILE': 'TEMPORARY_OUTPUT',
+            },
+            feedback=feedback,
+        )
+        return results['VOLUME']
 
-        def is_result_line(string):
-            return 'Volume:' in string
-
-        try:
-            result_line = next(filter(is_result_line, log))
-        except StopIteration:
-            raise ValueError(f'Failed to compute the raster volume for {self}')
-        else:
-            return float(result_line.split(': ')[-1])
+    def gaussian_filter(self: T, output: str = 'TEMPORARY_OUTPUT') -> T:
+        return type(self)(
+            QgsRasterLayer(
+                processing.run(
+                    'sagang:gaussianfilter',
+                    {
+                        'INPUT': self.layer,
+                        'RESULT': output,
+                        'KERNEL_RADIUS': 2,
+                        'SIGMA': 50,
+                    },
+                )['RESULT'],
+                self.layer.name(),
+                'gdal',
+            )
+        )
 
 
 @dataclass
@@ -143,6 +223,7 @@ class DEM(Raster):
         self,
         context: QgsProcessingContext | None = None,
         feedback: QgsProcessingFeedback | None = None,
+        output: str = 'TEMPORARY_OUTPUT',
     ) -> DEM:
         sink_route = processing.run(
             'sagang:sinkdrainageroutedetection',
@@ -160,7 +241,7 @@ class DEM(Raster):
             {
                 'DEM': self.layer,
                 'SINKROUTE': sink_route['SINKROUTE'],
-                'DEM_PREPROC': 'TEMPORARY_OUTPUT',
+                'DEM_PREPROC': output,
                 'METHOD': 1,
                 'THRESHOLD': False,
                 'THRSHEIGHT': 100,
@@ -196,10 +277,12 @@ class DEM(Raster):
             context=context,
             feedback=feedback,
         )
-        profile_paths = sorted(
-            Path(profiles['LINE']).parent.glob('*.shp'),
-            key=lambda path: int(path.stem.replace('LINE', '')),
-        )
+        profile_paths = list(Path(profiles['LINE']).parent.glob('*.shp'))
+        if len(profile_paths) > 1:
+            profile_paths = sorted(
+                profile_paths,
+                key=lambda path: int(path.stem.replace('LINE', '')),
+            )
         profiles = list(get_geometries_from_path(*profile_paths))
         return [
             next(snap_to_geometry([profile], [pour_point], tolerance=eps))
@@ -234,8 +317,10 @@ class DEM(Raster):
 def multilevel_b_spline(
     points: QgsVectorLayer,
     cell_size: float,
+    level: int = 10,
     context: QgsProcessingContext | None = None,
     feedback: QgsProcessingFeedback | None = None,
+    output: str = 'TEMPORARY_OUTPUT',
 ) -> DEM:
     return DEM(
         QgsRasterLayer(
@@ -246,9 +331,9 @@ def multilevel_b_spline(
                     'FIELD': 'Z',
                     'TARGET_USER_SIZE': cell_size,
                     'TARGET_USER_FITS': 0,
-                    'TARGET_OUT_GRID': 'TEMPORARY_OUTPUT',
+                    'TARGET_OUT_GRID': output,
                     'METHOD': 0,
-                    'LEVEL_MAX': 14,
+                    'LEVEL_MAX': level,
                 },
                 context=context,
                 feedback=feedback,
@@ -299,20 +384,47 @@ def inverse_distance_weighted(
 
 
 @dataclass
-class Evaluator:
+class VolumeEvaluator:
     dem: DEM
     estimation_dem: DEM
     truth_dem: DEM
     gully_cover: DEM
     estimation_surface: QgsVectorLayer
+    out_dir: Path
+    crs: QgsCoordinateReferenceSystem
 
     def __post_init__(self):
-        self.dem = self.dem.apply_mask(self.estimation_surface)
-        self.estimation_dem = self.estimation_dem.apply_mask(
-            self.estimation_surface
+        self.dem = self.dem.apply_mask(
+            self.estimation_surface,
+            output=(
+                self.out_dir / f'masked_{self.dem.layer.name()}.tif'
+            ).as_posix(),
         )
-        self.truth_dem = self.truth_dem.apply_mask(self.estimation_surface)
-        self.gully_cover = self.gully_cover.apply_mask(self.estimation_surface)
+        self.estimation_dem = self.estimation_dem.apply_mask(
+            self.estimation_surface,
+            output=(
+                self.out_dir / f'masked_{self.estimation_dem.layer.name()}.tif'
+            ).as_posix(),
+        )
+        self.truth_dem = self.truth_dem.apply_mask(
+            self.estimation_surface,
+            output=(
+                self.out_dir / f'masked_{self.truth_dem.layer.name()}.tif'
+            ).as_posix(),
+        )
+        self.gully_cover = self.gully_cover.apply_mask(
+            self.estimation_surface,
+            output=(
+                self.out_dir / f'masked_{self.gully_cover.layer.name()}.tif'
+            ).as_posix(),
+        )
+        for layer in (
+            self.dem,
+            self.estimation_dem,
+            self.truth_dem,
+            self.gully_cover,
+        ):
+            layer.layer.setCrs(self.crs)
 
     def get_masked(self) -> list[DEM]:
         return [
@@ -325,13 +437,46 @@ class Evaluator:
             )
         ]
 
-    def evaluate(self, feedback: QgsProcessingFeedback):
-        gully_cover_volume = self.gully_cover.volume()
-        truth_volume = gully_cover_volume - self.truth_dem.volume()
-        estimation_volume = gully_cover_volume - self.estimation_dem.volume()
-        error = abs(truth_volume - estimation_volume) / truth_volume
-        feedback.pushInfo(
-            f'Estimation: {estimation_volume:.3f}\n'
-            f'Truth: {truth_volume:.3f}\n'
-            f'Error: {error:.3%}'
-        )
+    def evaluate(self) -> QgsVectorLayer:
+        # NOTE: This does not account for the values which are negative
+        truth_diff = self.gully_cover - self.truth_dem
+        truth_volume = truth_diff.raster_volume()
+        estimated_diff = self.gully_cover - self.estimation_dem
+        estimated_volume = estimated_diff.raster_volume()
+        truth_zonal = processing.run(
+            'native:zonalstatisticsfb',
+            {
+                'INPUT': self.estimation_surface,
+                'INPUT_RASTER': truth_volume.layer,
+                'RASTER_BAND': 1,
+                'COLUMN_PREFIX': 'truth_',
+                'STATISTICS': [1],  # this is sum
+                'OUTPUT': 'TEMPORARY_OUTPUT',
+            },
+        )['OUTPUT']
+        estimated_zonal = processing.run(
+            'native:zonalstatisticsfb',
+            {
+                'INPUT': truth_zonal,
+                'INPUT_RASTER': estimated_volume.layer,
+                'RASTER_BAND': 1,
+                'COLUMN_PREFIX': 'estimated_',
+                'STATISTICS': [1],  # this is sum
+                'OUTPUT': 'TEMPORARY_OUTPUT',
+            },
+        )['OUTPUT']
+
+        with_error = processing.run(
+            'native:fieldcalculator',
+            {
+                'INPUT': estimated_zonal,
+                'FIELD_NAME': 'error',
+                'FIELD_TYPE': 0,
+                'FIELD_LENGTH': 0,
+                'FIELD_PRECISION': 0,
+                'FORMULA': 'abs("truth_sum" -  "estimated_sum") / "truth_sum"',
+                'OUTPUT': 'TEMPORARY_OUTPUT',
+            },
+        )['OUTPUT']
+
+        return with_error

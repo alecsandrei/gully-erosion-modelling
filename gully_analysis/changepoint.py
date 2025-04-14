@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import collections.abc as c
+import concurrent.futures
+import itertools
 import typing as t
 from dataclasses import dataclass
 from pathlib import Path
@@ -72,153 +74,19 @@ def estimate_gully_simpler(
         plt.yticks(fontsize=10)
         plt.ylabel('Elevation (m)', size=15)
         plt.tight_layout()
-        plt.savefig(debug_out_file, dpi=300)
+        plt.savefig(debug_out_file)
         plt.close()
 
     head = prev[: changepoints[0]]
+    z_diff = after[0] - prev[0]
     diff = after.shape[0] - prev.shape[0]
     after[: diff + head.shape[0]] = None
-    after[: head.shape[0]] = head
-
+    after[: head.shape[0]] = head + z_diff
     invalid = np.isnan(after)
     x = np.arange(after.shape[0])
     after[invalid] = np.interp(x[invalid], x[~invalid], after[~invalid])
-    debug_estimation(prev, after)
+    # debug_estimation(prev, after)
     return after
-
-
-def estimate_gully(
-    values_before: np.ndarray,
-    values_after: np.ndarray,
-    changepoints: c.Sequence[int],
-    debug_out_file: Path | None = None,
-    true_values: np.ndarray | None = None,
-):
-    # Only the first changepoint is considered.
-    # The others are used, for now, for plotting purposes (debug)
-
-    def poly_fit(x, y, d=5):
-        if x.shape[0] <= 5:
-            return y
-        return np.polynomial.polynomial.Polynomial.fit(x, y, d)(x)
-
-    def fill_head_with_nan(y: np.ndarray, changepoint: int):
-        y = y.copy()
-        y[:changepoint] = np.nan
-        return y
-
-    def pad(y1: np.ndarray, y2: np.ndarray):
-        y1 = y1.copy()
-        nans = np.empty(y2.shape[0])
-        nans[:] = np.nan
-        return np.concatenate([nans, y1])
-
-    def normalize(array, min_, max_):
-        y_min = min(array)
-        y_max = max(array)
-        return min_ + (array - y_min) * (max_ - min_) / (y_max - y_min)
-
-    def exponential(y):
-        return 5**y
-
-    def estimate_nan(y: np.ndarray):
-        y = y.copy()
-        nan_indices = np.argwhere(np.isnan(y))
-        nan_len = nan_indices.shape[0]
-        max_, min_ = y[nan_indices[0] - 1], y[nan_indices[-1] + 1]
-        # estimated = normalize(exponential(np.linspace(max_, min_, nan_len)), min_, max_)
-        # dont include max min
-        linear_sequence = np.linspace(max_, min_, nan_len + 2)[1:-1]
-        min_, max_ = linear_sequence[0], linear_sequence[-1]
-        estimated = normalize(exponential(linear_sequence), max_, min_)
-        y[nan_indices] = estimated
-        return y
-
-    def fill_polyfit(padded: np.ndarray, y_poly: np.ndarray, y2: np.ndarray):
-        padded = padded.copy()
-        y_poly += np.abs(y2[0] - y_poly[0])
-        padded[: y_poly.shape[0]] = y_poly
-        return padded
-
-    def debug_estimation(before: np.ndarray, estimation: np.ndarray):
-        import matplotlib.pyplot as plt
-
-        _, ax = plt.subplots(figsize=(15, 5))
-
-        x = range(before.shape[0] - estimation.shape[0], before.shape[0])
-        ax.plot(
-            x,
-            estimation,
-            c='#00ff00',
-            label='2019 estimated channel',
-            linewidth=2,
-        )
-        ax.plot(
-            before, c='#5795dc', label='2012 flow path profile', linewidth=2
-        )
-        if true_values is not None:
-            x = list(range(x.start, true_values.shape[0] + x.start))
-            print(len(x), len(true_values))
-            ax.plot(
-                x,
-                true_values,
-                c='yellow',
-                label='2019 flow path profile (truth)',
-                linewidth=2,
-            )
-        for i, changepoint in enumerate(changepoints):
-            ax.axvline(
-                changepoint,
-                color='r',
-                ls='--',
-                linewidth=2,
-                label='changepoint' if i == 0 else None,
-            )
-        ax.legend(prop={'size': 15})
-        plt.xticks(fontsize=10)
-        plt.yticks(fontsize=10)
-        plt.ylabel('Elevation (m)', size=15)
-        plt.tight_layout()
-        plt.savefig(debug_out_file, dpi=300)
-        plt.close()
-
-    def debug_poly_fit(head: np.ndarray, head_splline_fitted: np.ndarray):
-        import matplotlib.pyplot as plt
-
-        _, ax = plt.subplots(figsize=(5, 5))
-
-        x = range(head.shape[0])
-        ax.plot(x, head, c='#5795dc')
-        ax.plot(head_splline_fitted, c='#00ff00')
-        plt.xticks(fontsize=10)
-        plt.yticks(fontsize=10)
-        plt.ylabel('Elevation (m)', size=15)
-        plt.tight_layout()
-        plt.savefig(
-            debug_out_file.with_name(f'{debug_out_file.stem}_poly_fit.png'),
-            dpi=300,
-        )
-        plt.close()
-        # plt.show()
-
-    y1 = values_before.copy()
-    y1_head = y1[: changepoints[0]]
-    y1_poly = poly_fit(np.arange(y1_head.shape[0]), y1_head)
-    if debug_out_file is not None:
-        debug_poly_fit(y1_head, y1_poly)
-    y2 = values_after.copy()
-    no_head = fill_head_with_nan(y1, changepoints[0])
-    padded = pad(no_head, y2)
-    with_head = fill_polyfit(padded, y1_poly, y2)
-    estimation = estimate_nan(with_head)
-    # estimation[: changepoints[0]] = poly_fit(
-    #     np.arange(estimation[: changepoints[0]].shape[0]),
-    #     estimation[: changepoints[0]],
-    # )
-    # estimation = poly_fit(np.arange(estimation.shape[0]), estimation)
-    if debug_out_file is not None:
-        debug_estimation(y1, estimation)
-    return estimation
 
 
 def filter_on_id_line(
@@ -234,7 +102,7 @@ def samples_to_ndarray(samples: c.Iterable[QgsFeature]) -> np.ndarray:
     return np.array([sample.attribute('Z') for sample in samples])
 
 
-def get_changepoints(samples: np.ndarray, penalty: int = 10):
+def get_changepoints(samples: np.ndarray, penalty: int):
     algorithm = rpt.Pelt(model='rbf').fit(samples)
     # the last value should not be returned.
     return algorithm.predict(pen=penalty)[:-1]
@@ -243,24 +111,34 @@ def get_changepoints(samples: np.ndarray, penalty: int = 10):
 def estimate_gully_head(
     profile_samples: c.Sequence[QgsFeature],
     profile_to_estimate_samples: c.Sequence[QgsFeature],
-    profile_truth_samples: c.Sequence[QgsFeature],
     line_id: int,
-) -> list[QgsFeature]:
+    profile_truth_samples: c.Sequence[QgsFeature] | None = None,
+    changepoint_penalty: int = 10,
+) -> list[QgsFeature] | None:
     profile_samples_ndarray = samples_to_ndarray(profile_samples)
     profile_to_estimate_samples_ndarray = samples_to_ndarray(
         profile_to_estimate_samples
     )
-    profile_truth_ndarray = samples_to_ndarray(profile_truth_samples)
-    estimated = estimate_gully_simpler(
-        profile_samples_ndarray,
-        profile_to_estimate_samples_ndarray,
-        get_changepoints(profile_to_estimate_samples_ndarray),
+    changepoints = get_changepoints(
+        profile_to_estimate_samples_ndarray, penalty=changepoint_penalty
+    )
+    if not changepoints:
+        return None
+    path_to_plots = (
         Path(__file__).parent.parent
         / 'data'
         / 'test_data'
         / 'plots'
-        / f'{line_id}.png',
-        profile_truth_ndarray,
+        / f'{line_id}.png'
+    )
+    estimated = estimate_gully_simpler(
+        profile_samples_ndarray,
+        profile_to_estimate_samples_ndarray,
+        changepoints,
+        path_to_plots,
+        samples_to_ndarray(profile_truth_samples)
+        if profile_truth_samples is not None
+        else None,
     )
 
     estimated_features: list[QgsFeature] = []
@@ -274,27 +152,37 @@ def estimate_gully_head(
 def estimate_gully_heads(
     sampled_profiles: QgsVectorLayer,
     sampled_profiles_to_estimate: QgsVectorLayer,
-    sampled_profiles_truth: QgsVectorLayer,
     profile_count: int,
+    sampled_profiles_truth: QgsVectorLayer | None = None,
+    changepoint_penalty: int = 10,
 ) -> list[QgsFeature]:
-    estimated: list[QgsFeature] = []
-    for line_id in range(profile_count):
+    def handle_line_id(line_id: int):
         profiles_subset = filter_on_id_line(line_id, sampled_profiles)
         profiles_to_estimate_subset = filter_on_id_line(
             line_id, sampled_profiles_to_estimate
         )
-        profiles_truth_subset = filter_on_id_line(
-            line_id, sampled_profiles_truth
-        )
-        estimated.extend(
-            estimate_gully_head(
-                profiles_subset,
-                profiles_to_estimate_subset,
-                profiles_truth_subset,
-                line_id,
+        profiles_truth_subset = None
+        if sampled_profiles_truth is not None:
+            profiles_truth_subset = filter_on_id_line(
+                line_id, sampled_profiles_truth
             )
+        estimated_gully_head = estimate_gully_head(
+            profiles_subset,
+            profiles_to_estimate_subset,
+            line_id,
+            profile_truth_samples=profiles_truth_subset,
+            changepoint_penalty=changepoint_penalty,
         )
-    return estimated
+        if estimated_gully_head is not None:
+            return estimated_gully_head
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=24) as executor:
+        results = executor.map(handle_line_id, range(profile_count))
+    return list(
+        itertools.chain.from_iterable(
+            result for result in results if result is not None
+        )
+    )
 
 
 @dataclass
@@ -307,28 +195,33 @@ class Samples:
 
 def get_estimated_samples(
     dem: DEM,
-    dem_truth: DEM,
     profiles: c.Sequence[QgsGeometry],
     profiles_to_estimate: c.Sequence[QgsGeometry],
     boundary: QgsGeometry,
     context: QgsProcessingContext,
     feedback: QgsProcessingFeedback,
+    dem_truth: DEM | None = None,
+    changepoint_penalty: int = 10,
 ) -> Samples:
     sampled_profiles = dem.sample(profiles, feedback=feedback, context=context)
     sampled_profiles_to_estimate = dem.sample(
         profiles_to_estimate, feedback=feedback, context=context
     )
-    sampled_profiles_truth = dem_truth.sample(
-        profiles_to_estimate, feedback=feedback, context=context
-    )
+
+    sampled_profiles_truth = None
+    if dem_truth is not None:
+        sampled_profiles_truth = dem_truth.sample(
+            profiles_to_estimate, feedback=feedback, context=context
+        )
     sampled_boundary = dem.sample(
         [boundary], feedback=feedback, context=context
     )
     estimated = estimate_gully_heads(
         sampled_profiles,
         sampled_profiles_to_estimate,
-        sampled_profiles_truth,
         len(profiles),
+        sampled_profiles_truth=sampled_profiles_truth,
+        changepoint_penalty=changepoint_penalty,
     )
     layer = QgsVectorLayer('Point', 'estimated', 'memory')
     provider = layer.dataProvider()
@@ -344,7 +237,9 @@ def get_estimated_samples(
     )
 
 
-def aggregate_samples(samples: QgsVectorLayer) -> QgsVectorLayer:
+def aggregate_samples(
+    samples: QgsVectorLayer, aggregate_method: str = 'minimum'
+) -> QgsVectorLayer:
     return processing.run(
         'native:aggregate',
         {
@@ -396,7 +291,7 @@ def aggregate_samples(samples: QgsVectorLayer) -> QgsVectorLayer:
                     'type_name': 'double precision',
                 },
                 {
-                    'aggregate': 'minimum',
+                    'aggregate': aggregate_method,
                     'delimiter': ',',
                     'input': '"Z"',
                     'length': 18,

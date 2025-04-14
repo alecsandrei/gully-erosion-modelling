@@ -4,6 +4,7 @@ import collections.abc as c
 import itertools
 import typing as t
 
+import processing
 from qgis.core import (
     QgsCoordinateTransformContext,
     QgsFeature,
@@ -21,6 +22,29 @@ if t.TYPE_CHECKING:
 ExportResult = tuple[
     QgsVectorFileWriter.WriterError, str | None, str | None, str | None
 ]
+
+
+def delete_holes(layer: QgsVectorLayer, min_area: float = 0) -> QgsVectorLayer:
+    return processing.run(
+        'native:deleteholes',
+        {
+            'INPUT': layer,
+            'MIN_AREA': min_area,
+            'OUTPUT': 'TEMPORARY_OUTPUT',
+        },
+    )['OUTPUT']
+
+
+def dissolve_layer(layer: QgsVectorLayer) -> QgsVectorLayer:
+    return processing.run(
+        'native:dissolve',
+        {
+            'INPUT': layer,
+            'FIELD': [],
+            'SEPARATE_DISJOINT': False,
+            'OUTPUT': 'TEMPORARY_OUTPUT',
+        },
+    )['OUTPUT']
 
 
 def get_first_geometry(layer: QgsVectorLayer) -> QgsGeometry:
@@ -46,15 +70,17 @@ def get_geometries_from_layer(
 
 def export(
     layer: QgsVectorLayer, out_file: Path, driver_name: str = 'ESRI Shapefile'
-) -> ExportResult:
+) -> tuple[ExportResult, QgsVectorLayer]:
     # NOTE: this function is unused. Should be dropped
     # later on if no use is found
     options = QgsVectorFileWriter.SaveVectorOptions()
     ctx = QgsCoordinateTransformContext()
     options.driverName = driver_name
-    return QgsVectorFileWriter.writeAsVectorFormatV3(
+    result = QgsVectorFileWriter.writeAsVectorFormatV3(
         layer, out_file.as_posix(), ctx, options
     )
+    layer = QgsVectorLayer(out_file.as_posix(), layer.name(), 'ogr')
+    return (result, layer)
 
 
 def remove_layers_from_project(

@@ -3,7 +3,6 @@ from __future__ import annotations
 import collections.abc as c
 import typing as t
 from collections import UserList, deque
-from pathlib import Path
 
 import processing
 from qgis.analysis import QgsGeometrySnapper
@@ -110,17 +109,17 @@ class Centerlines(UserList[QgsGeometry]):
         polygon_layer: QgsVectorLayer,
         context: QgsProcessingContext,
         feedback: QgsProcessingFeedback,
-        output: str | Path = 'TEMPORARY_OUTPUT',
+        output: str = 'TEMPORARY_OUTPUT',
+        smoothness: float = 5,
+        thin: float = 1,
     ):
-        if isinstance(output, Path):
-            output = output.as_posix()
         geometry_fixed = fix_geometry(polygon_layer, context, feedback)
         centerline = processing.run(
             'grass:v.voronoi.skeleton',
             {
                 'input': geometry_fixed,
-                'smoothness': 1,
-                'thin': 1,
+                'smoothness': smoothness,
+                'thin': thin,
                 '-a': False,
                 '-s': True,
                 '-l': False,
