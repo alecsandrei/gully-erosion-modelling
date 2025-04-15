@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import shutil
 import typing as t
 from dataclasses import dataclass
 from enum import Enum, auto
@@ -190,7 +189,7 @@ class EstimateErosionFuture(QgsProcessingAlgorithm):
             self.tr(
                 'The penalty for the PELT algorithm used for detecting the changepoint for the gully head'
             ),
-            defaultValue=5,
+            defaultValue=10,
         )
         changepoint_penalty_parameter.setFlags(
             changepoint_penalty_parameter.flags()
@@ -201,7 +200,7 @@ class EstimateErosionFuture(QgsProcessingAlgorithm):
         centerline_smoothness_param = QgsProcessingParameterNumber(
             self.CENTERLINE_SMOOTHNESS,
             self.tr('The r.voronoi.skeleton smoothness parameter'),
-            defaultValue=5,
+            defaultValue=20,
         )
         centerline_smoothness_param.setFlags(
             centerline_smoothness_param.flags()
@@ -212,7 +211,7 @@ class EstimateErosionFuture(QgsProcessingAlgorithm):
         centerline_thin_param = QgsProcessingParameterNumber(
             self.CENTERLINE_THIN,
             self.tr('The r.voronoi.skeleton thin parameter'),
-            defaultValue=5,
+            defaultValue=0,
         )
         centerline_thin_param.setFlags(
             centerline_thin_param.flags()
@@ -236,7 +235,7 @@ class EstimateErosionFuture(QgsProcessingAlgorithm):
         multilevel_b_spline_level_param = QgsProcessingParameterNumber(
             self.MULTILEVEL_B_SPLINE_LEVEL,
             self.tr('Multilevel B-Spline interpolation level parameter'),
-            defaultValue=10,
+            defaultValue=14,
         )
         multilevel_b_spline_level_param.setFlags(
             multilevel_b_spline_level_param.flags()
@@ -280,8 +279,6 @@ class EstimateErosionFuture(QgsProcessingAlgorithm):
     ):
         # TODO: prevent the code from breaking if feedback is None
         out_dir = Path(context.project().homePath()) / 'interim_files'
-        if out_dir.exists():
-            shutil.rmtree(out_dir, ignore_errors=True)
         out_dir.mkdir(exist_ok=True)
         assert feedback is not None
         project = context.project()
@@ -344,7 +341,7 @@ class EstimateErosionFuture(QgsProcessingAlgorithm):
             )
             _, difference_layer = export(
                 difference_layer,
-                (out_dir / Layers.DIFFERENCE.name).with_suffix('.shp'),
+                (out_dir / Layers.DIFFERENCE.name).with_suffix('.fgb'),
             )
             difference_layer.setCrs(crs)
             project.addMapLayer(difference_layer)
@@ -360,7 +357,7 @@ class EstimateErosionFuture(QgsProcessingAlgorithm):
                 QgsProcessingParameterFileDestination(
                     name='centerlines'
                 ).generateTemporaryDestination(context)
-            ).with_suffix('.shp')
+            ).with_suffix('.fgb')
             centerlines = Centerlines.compute(
                 gully_future_boundary,
                 context,
@@ -368,10 +365,11 @@ class EstimateErosionFuture(QgsProcessingAlgorithm):
                 temp_path.as_posix(),
                 smoothness=advanced_params.centerline_smoothness,
                 thin=advanced_params.centerline_thin,
+                # thin='adaptive',
             )
             centerlines = Centerlines.from_layer(
                 export(
-                    centerlines._layer, out_file=out_dir / 'centerlines.shp'
+                    centerlines._layer, out_file=out_dir / 'centerlines.fgb'
                 )[1]
             )
             if debug_mode:
@@ -399,7 +397,7 @@ class EstimateErosionFuture(QgsProcessingAlgorithm):
             _, pour_points_layer = export(
                 pour_points_layer,
                 (out_dir / Layers.SHORTEST_PATHS_START_POINTS.name).with_suffix(
-                    '.shp'
+                    '.fgb'
                 ),
             )
             project.addMapLayer(pour_points_layer)
@@ -425,7 +423,7 @@ class EstimateErosionFuture(QgsProcessingAlgorithm):
             _, points_intersecting_gully_layer = export(
                 points_intersecting_gully_layer,
                 (out_dir / Layers.POINTS_INTERSECTING_GULLY.name).with_suffix(
-                    '.shp'
+                    '.fgb'
                 ),
             )
             project.addMapLayer(points_intersecting_gully_layer)
@@ -444,7 +442,7 @@ class EstimateErosionFuture(QgsProcessingAlgorithm):
             shortest_paths_as_layer.setCrs(crs)
             _, shortest_paths_as_layer = export(
                 shortest_paths_as_layer,
-                (out_dir / Layers.SHORTEST_PATHS.name).with_suffix('.shp'),
+                (out_dir / Layers.SHORTEST_PATHS.name).with_suffix('.fgb'),
             )
             project.addMapLayer(shortest_paths_as_layer)
         if not gully_elevation_is_sink_removed:
@@ -473,7 +471,7 @@ class EstimateErosionFuture(QgsProcessingAlgorithm):
                 profile_pour_points_layer,
                 (
                     out_dir / Layers.FLOW_PATH_PROFILE_POUR_POINTS.name
-                ).with_suffix('.shp'),
+                ).with_suffix('.fgb'),
             )
             project.addMapLayer(profile_pour_points_layer)
 
@@ -492,7 +490,7 @@ class EstimateErosionFuture(QgsProcessingAlgorithm):
             profiles_layer.setCrs(crs)
             _, profiles_layer = export(
                 profiles_layer,
-                (out_dir / Layers.FLOW_PATH_PROFILES.name).with_suffix('.shp'),
+                (out_dir / Layers.FLOW_PATH_PROFILES.name).with_suffix('.fgb'),
             )
             project.addMapLayer(profiles_layer)
         assert len(profile_pour_points_dedup) == len(
@@ -510,7 +508,7 @@ class EstimateErosionFuture(QgsProcessingAlgorithm):
             mapped_profiles_layer.setCrs(crs)
             _, mapped_profiles_layer = export(
                 mapped_profiles_layer,
-                (out_dir / Layers.MAPPED_PROFILES.name).with_suffix('.shp'),
+                (out_dir / Layers.MAPPED_PROFILES.name).with_suffix('.fgb'),
             )
             project.addMapLayer(mapped_profiles_layer)
 
@@ -521,7 +519,7 @@ class EstimateErosionFuture(QgsProcessingAlgorithm):
         # ]
         samples = get_estimated_samples(
             dem=sink_removed,
-            # dem_truth=gully_future_elevation.remove_sinks(),
+            dem_truth=gully_future_elevation.remove_sinks(),
             profiles=[
                 profiles[profile['profile_index']]
                 for profile in mapped_profiles
@@ -541,7 +539,9 @@ class EstimateErosionFuture(QgsProcessingAlgorithm):
             aggregated.setCrs(crs)
             aggregated.setName(Layers.SAMPLES.name)
             _, aggregated = export(
-                aggregated, (out_dir / Layers.SAMPLES.name).with_suffix('.shp')
+                aggregated,
+                (out_dir / Layers.SAMPLES.name).with_suffix('.shp'),
+                driver_name='ESRI Shapefile',
             )
             project.addMapLayer(aggregated)
         gully_elevation.layer.setCrs(crs)
@@ -553,7 +553,7 @@ class EstimateErosionFuture(QgsProcessingAlgorithm):
                 level=advanced_params.multilevel_b_spline_level,
                 context=context,
                 feedback=feedback if debug_mode else None,
-                output=(out_dir / 'interpolated_dem.tif').as_posix(),
+                # output=(out_dir / 'interpolated_dem.tif').as_posix(),
             )
             .align_to(gully_elevation)
             .gaussian_filter(
@@ -568,6 +568,8 @@ class EstimateErosionFuture(QgsProcessingAlgorithm):
             interpolated_dem.layer.setCrs(crs)
             interpolated_dem.layer.setName(Layers.INTERPOLATED_DEM.name)
             project.addMapLayer(interpolated_dem.layer)
+        if not interpolated_dem.layer.isValid():
+            raise Exception
         gully_cover = (
             inverse_distance_weighted(
                 samples.boundary,
@@ -620,10 +622,10 @@ class EstimateErosionFuture(QgsProcessingAlgorithm):
         if debug_mode:
             _, estimated_surfaces = export(
                 estimated_surfaces,
-                (out_dir / Layers.ESTIMATED_SURFACES.name).with_suffix('.shp'),
+                (out_dir / Layers.ESTIMATED_SURFACES.name).with_suffix('.fgb'),
             )
 
         # advanced_params.to_file(estimation_file)
 
         project.addMapLayer(estimated_surfaces)
-        return {self.OUTPUT: estimated_surfaces}
+        return {self.OUTPUT: None}

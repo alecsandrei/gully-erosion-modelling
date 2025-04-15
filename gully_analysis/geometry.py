@@ -3,7 +3,9 @@ from __future__ import annotations
 import collections.abc as c
 import typing as t
 from collections import UserList, deque
+from math import pi
 
+import numpy as np
 import processing
 from qgis.analysis import QgsGeometrySnapper
 from qgis.core import (
@@ -13,7 +15,7 @@ from qgis.core import (
     QgsVectorLayer,
 )
 
-from .utils import get_geometries_from_layer
+from .utils import dissolve_layer, get_first_geometry, get_geometries_from_layer
 
 if t.TYPE_CHECKING:
     from qgis.core import QgsProcessingContext, QgsProcessingFeedback
@@ -99,21 +101,35 @@ class Centerlines(UserList[QgsGeometry]):
         return geom.coerceToType(Qgis.WkbType.MultiLineString)[0]
 
     @staticmethod
+    def get_thin_from_roundness(roundness: float):
+        # 0.05 <= uses thin 5, 0.3 >= thin 0
+        # inbetween geomspaced
+        space = np.geomspace(0.2, 0.05, 5)
+        return int(np.digitize([roundness], space)[0])
+
+    @staticmethod
     def from_layer(centerlines: QgsVectorLayer):
         return Centerlines(
             list(get_geometries_from_layer(centerlines)), centerlines
         )
 
-    @staticmethod
+    @classmethod
     def compute(
+        cls,
         polygon_layer: QgsVectorLayer,
         context: QgsProcessingContext,
         feedback: QgsProcessingFeedback,
         output: str = 'TEMPORARY_OUTPUT',
         smoothness: float = 5,
-        thin: float = 1,
+        thin: float | t.Literal['adaptive'] = 1,
     ):
         geometry_fixed = fix_geometry(polygon_layer, context, feedback)
+        if thin == 'adaptive':
+            dissolved = dissolve_layer(geometry_fixed)
+            polygon = get_first_geometry(dissolved)
+            thin = cls.get_thin_from_roundness(roundness(polygon))
+            print(f'Using {thin=}')
+
         centerline = processing.run(
             'grass:v.voronoi.skeleton',
             {
@@ -163,6 +179,12 @@ class Centerlines(UserList[QgsGeometry]):
                 if centerline.intersects(geometry)
             ]
         )
+
+
+def roundness(geometry: QgsGeometry) -> float:
+    area = geometry.area()
+    perimeter = geometry.length()
+    return (4 * pi * area) / perimeter**2
 
 
 def fix_geometry(

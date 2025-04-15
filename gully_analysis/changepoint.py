@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import collections.abc as c
-import concurrent.futures
 import itertools
 import typing as t
 from dataclasses import dataclass
@@ -20,6 +19,33 @@ if t.TYPE_CHECKING:
     )
 
     from .raster import DEM
+
+
+def stepwise_interpolate(after, num_steps=5):
+    is_nan = np.isnan(after)
+
+    # Detect contiguous nan ranges
+    edges = np.diff(np.concatenate(([0], is_nan.view(np.int8), [0])))
+    starts = np.where(edges == 1)[0]
+    ends = np.where(edges == -1)[0]
+
+    for start, end in zip(starts, ends):
+        gap_len = end - start
+        if start == 0 or end == len(after):
+            continue  # skip gaps at edges
+
+        y0 = after[start - 1]
+        y1 = after[end]
+
+        step_vals = np.linspace(y0, y1, num=num_steps + 1)[1:]  # exclude y0
+
+        # Assign step values evenly across the gap
+        # Each step spans roughly gap_len / num_steps indices
+        bins = np.array_split(np.arange(gap_len), num_steps)
+        for i, bin_idxs in enumerate(bins):
+            after[start + bin_idxs] = step_vals[i]
+
+    return after
 
 
 def estimate_gully_simpler(
@@ -75,6 +101,7 @@ def estimate_gully_simpler(
         plt.ylabel('Elevation (m)', size=15)
         plt.tight_layout()
         plt.savefig(debug_out_file)
+        print('Saving screenshot to', debug_out_file)
         plt.close()
 
     head = prev[: changepoints[0]]
@@ -84,8 +111,26 @@ def estimate_gully_simpler(
     after[: head.shape[0]] = head + z_diff
     invalid = np.isnan(after)
     x = np.arange(after.shape[0])
-    after[invalid] = np.interp(x[invalid], x[~invalid], after[~invalid])
-    # debug_estimation(prev, after)
+    x_valid = x[~invalid]
+    y_valid = after[~invalid]
+
+    # # # Using Akima1DInterpolator instead of np.interp
+    # if len(x_valid) > 3:  # Cubic spline requires at least 4 points
+    #     cs = Akima1DInterpolator(x_valid, y_valid)
+    #     after[invalid] = cs(x[invalid])
+    # else:  # Fall back to linear interpolation if we don't have enough points
+    #     after[invalid] = np.interp(x[invalid], x_valid, y_valid)
+    # Stepwise interpolation (forward-fill)
+    # if len(x_valid) > 0:
+    #     # Searchsorted returns indices where invalid x should be inserted in x_valid
+    #     idxs = np.searchsorted(x_valid, x[invalid], side='right') - 1
+    #     # Clip to ensure indices are valid
+    #     idxs = np.clip(idxs, 0, len(y_valid) - 1)
+    #     after[invalid] = y_valid[idxs]
+    # after = stepwise_interpolate(after)
+    after[invalid] = np.interp(x[invalid], x_valid, y_valid)
+
+    debug_estimation(prev, after)
     return after
 
 
@@ -103,9 +148,9 @@ def samples_to_ndarray(samples: c.Iterable[QgsFeature]) -> np.ndarray:
 
 
 def get_changepoints(samples: np.ndarray, penalty: int):
-    algorithm = rpt.Pelt(model='rbf').fit(samples)
+    algorithm = rpt.Pelt(model='l2').fit(samples)
     # the last value should not be returned.
-    return algorithm.predict(pen=penalty)[:-1]
+    return algorithm.predict(pen=penalty)
 
 
 def estimate_gully_head(
@@ -119,8 +164,13 @@ def estimate_gully_head(
     profile_to_estimate_samples_ndarray = samples_to_ndarray(
         profile_to_estimate_samples
     )
+    profile_truth_samples_ndarray = (
+        samples_to_ndarray(profile_truth_samples)
+        if profile_truth_samples is not None
+        else None
+    )
     changepoints = get_changepoints(
-        profile_to_estimate_samples_ndarray, penalty=changepoint_penalty
+        profile_samples_ndarray, penalty=changepoint_penalty
     )
     if not changepoints:
         return None
@@ -136,9 +186,7 @@ def estimate_gully_head(
         profile_to_estimate_samples_ndarray,
         changepoints,
         path_to_plots,
-        samples_to_ndarray(profile_truth_samples)
-        if profile_truth_samples is not None
-        else None,
+        profile_truth_samples_ndarray,
     )
 
     estimated_features: list[QgsFeature] = []
@@ -176,8 +224,11 @@ def estimate_gully_heads(
         if estimated_gully_head is not None:
             return estimated_gully_head
 
-    with concurrent.futures.ThreadPoolExecutor(max_workers=24) as executor:
-        results = executor.map(handle_line_id, range(profile_count))
+    results = []
+    for i in range(profile_count):
+        results.append(handle_line_id(i))
+    # with concurrent.futures.ThreadPoolExecutor(max_workers=24) as executor:
+    #     results = executor.map(handle_line_id, range(profile_count))
     return list(
         itertools.chain.from_iterable(
             result for result in results if result is not None

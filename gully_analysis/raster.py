@@ -82,7 +82,6 @@ class Raster:
             )
         )
 
-
     @property
     def extent(self) -> Extent:
         return Extent.from_raster(self.layer)
@@ -348,6 +347,8 @@ def inverse_distance_weighted(
     points: QgsVectorLayer,
     cell_size: float,
     power: int = 2,
+    weighting: int = 1,
+    output: str = 'TEMPORARY_OUTPUT',
     context: QgsProcessingContext | None = None,
     feedback: QgsProcessingFeedback | None = None,
 ) -> DEM:
@@ -364,13 +365,13 @@ def inverse_distance_weighted(
                     'CV_SAMPLES': 10,
                     'TARGET_USER_SIZE': cell_size,
                     'TARGET_USER_FITS': 0,
-                    'TARGET_OUT_GRID': 'TEMPORARY_OUTPUT',
+                    'TARGET_OUT_GRID': output,
                     'SEARCH_RANGE': 1,
                     'SEARCH_RADIUS': 1000,
                     'SEARCH_POINTS_ALL': 1,
                     'SEARCH_POINTS_MIN': 1,
                     'SEARCH_POINTS_MAX': 20,
-                    'DW_WEIGHTING': 1,
+                    'DW_WEIGHTING': weighting,
                     'DW_IDW_POWER': power,
                     'DW_BANDWIDTH': 1,
                 },

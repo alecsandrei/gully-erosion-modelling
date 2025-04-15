@@ -69,7 +69,7 @@ def get_geometries_from_layer(
 
 
 def export(
-    layer: QgsVectorLayer, out_file: Path, driver_name: str = 'ESRI Shapefile'
+    layer: QgsVectorLayer, out_file: Path, driver_name: str = 'FlatGeobuf'
 ) -> tuple[ExportResult, QgsVectorLayer]:
     # NOTE: this function is unused. Should be dropped
     # later on if no use is found
