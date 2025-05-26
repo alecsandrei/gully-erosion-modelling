@@ -6,6 +6,7 @@ import typing as t
 
 import processing
 from qgis.core import (
+    QgsCoordinateReferenceSystem,
     QgsCoordinateTransformContext,
     QgsFeature,
     QgsProject,
@@ -35,6 +36,44 @@ def delete_holes(layer: QgsVectorLayer, min_area: float = 0) -> QgsVectorLayer:
     )['OUTPUT']
 
 
+def intersection(
+    layer: QgsVectorLayer,
+    overlay: QgsVectorLayer,
+    output: str = 'TEMPORARY_OUTPUT',
+) -> QgsVectorLayer:
+    result = processing.run(
+        'native:intersection',
+        {
+            'INPUT': layer,
+            'OVERLAY': overlay,
+            'INPUT_FIELDS': [],
+            'OVERLAY_FIELDS': [],
+            'OVERLAY_FIELDS_PREFIX': '',
+            'OUTPUT': output,
+            'GRID_SIZE': None,
+        },
+    )['OUTPUT']
+    if output == 'TEMPORARY_OUTPUT':
+        return result
+    return QgsVectorLayer(result, layer.name(), 'ogr')
+
+
+def difference(
+    input_layer: QgsVectorLayer,
+    overlay: QgsVectorLayer,
+    output: str = 'TEMPORARY_OUTPUT',
+):
+    return processing.run(
+        'native:difference',
+        {
+            'INPUT': input_layer,
+            'OVERLAY': overlay,
+            'OUTPUT': output,
+            'GRID_SIZE': None,
+        },
+    )['OUTPUT']
+
+
 def dissolve_layer(layer: QgsVectorLayer) -> QgsVectorLayer:
     return processing.run(
         'native:dissolve',
@@ -43,6 +82,21 @@ def dissolve_layer(layer: QgsVectorLayer) -> QgsVectorLayer:
             'FIELD': [],
             'SEPARATE_DISJOINT': False,
             'OUTPUT': 'TEMPORARY_OUTPUT',
+        },
+    )['OUTPUT']
+
+
+def merge_vector_layers(
+    layers: list[QgsVectorLayer],
+    crs: QgsCoordinateReferenceSystem,
+    output: str = 'TEMPORARY_OUTPUT',
+) -> QgsVectorLayer:
+    return processing.run(
+        'native:mergevectorlayers',
+        {
+            'LAYERS': layers,
+            'CRS': crs,
+            'OUTPUT': output,
         },
     )['OUTPUT']
 

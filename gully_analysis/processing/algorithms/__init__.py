@@ -1,3 +1,5 @@
-from .estimate_erosion_future import EstimateErosionFuture
+from __future__ import annotations
+
+from .estimate_erosion import EstimateErosionFuture, EstimateErosionPast
 
 __all__ = ['EstimateErosionFuture']

@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from enum import Enum
 from pathlib import Path
 
@@ -13,6 +15,7 @@ class PluginName(Displayable):
 
 class Algorithm(Displayable):
     ESTIMATE_EROSION_FUTURE = 'estimatefuture'
+    ESTIMATE_EROSION_PAST = 'estimatepast'
 
 
 class AlgorithmGroup(Displayable):

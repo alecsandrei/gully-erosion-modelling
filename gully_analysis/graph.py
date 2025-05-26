@@ -12,7 +12,7 @@ from qgis.analysis import (
 )
 from qgis.core import Qgis, QgsGeometry, QgsPointXY
 
-from .geometry import Endpoints
+from .geometry import Endpoints, get_longest, remove_duplicated
 
 if t.TYPE_CHECKING:
     from qgis.core import QgsProcessingFeedback, QgsVectorLayer
@@ -24,7 +24,7 @@ class MappedProfile(t.TypedDict):
 
 
 @dataclass
-class ProfilePathMapper:
+class ProfileCenterlineMapper:
     profile_pour_points: c.Sequence[QgsGeometry]
     profiles: c.Sequence[QgsGeometry]
     shortest_paths: c.Sequence[ShortestPath]
@@ -42,6 +42,8 @@ class ProfilePathMapper:
             for line in self.profiles
             if Endpoints.from_linestring(line).first == shortest_path.end
         ]
+        if not intersecting_lines:
+            return False
         intersecting_line = intersecting_lines[0]
         intersection = intersecting_line.intersection(shortest_path.path)
         if intersection.wkbType() != Qgis.WkbType.MultiPoint:
@@ -71,20 +73,20 @@ class ProfilePathMapper:
 
         def get_matched_flow_path_profile(
             point: QgsPointXY,
-        ) -> tuple[int, QgsGeometry]:
+        ) -> tuple[int, QgsGeometry] | None:
             pour_point = None
             for i, pour_point in enumerate(self.profile_pour_points):
                 if pour_point.asPoint() == point:
-                    return (i, self.profiles[i])
-            raise Exception(
-                f'Should not have reached here: {pour_point, point}'
-            )
+                    for j, profile in enumerate(self.profiles):
+                        if Endpoints.from_linestring(profile).first == point:
+                            return (j, profile)
 
         mapped_profiles: list[MappedProfile] = []
         for shortest_path in self.shortest_paths:
-            flow_path_profile_index, flow_path_profile = (
-                get_matched_flow_path_profile(shortest_path.end)
-            )
+            matched = get_matched_flow_path_profile(shortest_path.end)
+            if matched is None:
+                continue
+            flow_path_profile_index, flow_path_profile = matched
             updated = self.fix_shortest_path_if_intersects(shortest_path)
             flow_path_profile_copy = QgsGeometry(flow_path_profile)
             # assert flow_path_profile_copy.intersects(shortest_path.path)
@@ -125,6 +127,52 @@ class ProfilePathMapper:
 
 
 @dataclass
+class ProfileMapper:
+    profiles: c.Sequence[QgsGeometry]
+    boundary_difference: QgsGeometry
+
+    def get_mapped_profiles(self) -> list[MappedProfile]:
+        mapped_profiles: list[MappedProfile] = []
+        for i, profile in enumerate(self.profiles):
+            mapped_profiles.append(
+                t.cast(
+                    MappedProfile,
+                    {
+                        #'mapped': profile.intersection(self.past_boundary),
+                        'mapped': profile.difference(self.boundary_difference),
+                        'profile_index': i,
+                    },
+                )
+            )
+        return self.dedup_mapped_profiles(mapped_profiles)
+
+    def dedup_mapped_profiles(
+        self, mapped_profiles: list[MappedProfile]
+    ) -> list[MappedProfile]:
+        deduped = []
+        unique = remove_duplicated(
+            [profile_map['mapped'] for profile_map in mapped_profiles]
+        )
+        for mapped_profile in unique:
+            mapped_profiles_subset = [
+                profile_map
+                for profile_map in mapped_profiles
+                if profile_map['mapped'] == mapped_profile
+            ]
+            if len(mapped_profiles_subset) == 1:
+                deduped.append(mapped_profiles_subset[0])
+                continue
+            profiles_subset = [
+                self.profiles[profile_map['profile_index']]
+                for profile_map in mapped_profiles_subset
+            ]
+            longest_profile = get_longest(profiles_subset)
+            index = profiles_subset.index(longest_profile)
+            deduped.append(mapped_profiles_subset[index])
+        return deduped
+
+
+@dataclass
 class ShortestPath:
     start: QgsPointXY
     end: QgsPointXY
@@ -132,76 +180,6 @@ class ShortestPath:
 
 
 ShortestPaths = list[ShortestPath]
-
-
-# def get_shortest_paths(
-#     start_points: list[QgsGeometry],
-#     lines: QgsVectorLayer,
-#     destination_points: list[QgsGeometry],
-#     tolerance: float = 0.0001,
-#     feedback: QgsProcessingFeedback | None = None,
-# ) -> ShortestPaths:
-#     """Computes shortest paths from the start points to the destination points.
-
-#     The shortest path is the path from the start point to the closest
-#     destination point in the network.
-#     """
-#     # TODO: find a faster way to compute this
-#     director = QgsVectorLayerDirector(
-#         lines, -1, '', '', '', QgsVectorLayerDirector.Direction.DirectionBoth
-#     )
-#     builder = QgsGraphBuilder(lines.crs(), topologyTolerance=tolerance)
-
-#     start_points_as_xy = map(QgsGeometry.asPoint, start_points)
-#     destination_points_as_xy = map(QgsGeometry.asPoint, destination_points)
-#     tied_points = director.makeGraph(
-#         builder, itertools.chain(start_points_as_xy, destination_points_as_xy)
-#     )
-#     tied_start_points = tied_points[: len(start_points)]
-#     tied_end_points = tied_points[len(start_points) :]
-#     shortest_paths: ShortestPaths = []
-#     for i, tied_start_point in enumerate(tied_start_points, start=1):
-#         graph = builder.graph()
-#         start_idx = graph.findVertex(tied_start_point)
-#         shortest_route = None
-#         route_end_point = None
-#         for j, tied_end_point in enumerate(tied_end_points, start=1):
-#             end_idx = graph.findVertex(tied_end_point)
-#             tree, _ = QgsGraphAnalyzer.dijkstra(graph, start_idx, 0)
-#             route = [graph.vertex(end_idx).point()]
-
-#             replace = True
-#             while end_idx != start_idx:
-#                 if tree[end_idx] == -1:
-#                     if feedback is not None:
-#                         feedback.pushWarning(
-#                             f'No route for start id {i}, end id {j}?, {route, end_idx, start_idx}'
-#                         )
-#                     replace = False
-#                     break
-#                 end_idx = graph.edge(tree[end_idx]).fromVertex()
-#                 route.insert(0, graph.vertex(end_idx).point())
-#                 if shortest_route is not None and len(route) >= len(
-#                     shortest_route
-#                 ):
-#                     replace = False
-#                     break
-
-#             if replace:
-#                 route_end_point = tied_end_point
-#                 shortest_route = route
-
-#         if shortest_route:
-#             assert route_end_point is not None
-#             shortest_paths.append(
-#                 ShortestPath(
-#                     tied_start_point,
-#                     route_end_point,
-#                     QgsGeometry.fromPolylineXY(shortest_route),
-#                 ),
-#             )
-
-#     return shortest_paths
 
 
 def get_shortest_paths(

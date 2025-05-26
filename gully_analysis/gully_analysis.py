@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from qgis.core import QgsApplication
 
 from .processing.provider import GullyAnalysisProvider

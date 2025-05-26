@@ -2,23 +2,30 @@ from __future__ import annotations
 
 import collections.abc as c
 import typing as t
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import processing
 from qgis.core import (
+    QgsCoordinateReferenceSystem,
     QgsProcessingContext,
     QgsProcessingFeedback,
+    QgsProject,
     QgsRasterLayer,
     QgsVectorLayer,
 )
 
 from .exceptions import InvalidCoordinateSystem
-from .geometry import snap_to_geometry
-from .utils import geometries_to_layer, get_geometries_from_path
+from .utils import (
+    difference,
+    geometries_to_layer,
+    get_geometries_from_layer,
+    get_geometries_from_path,
+    intersection,
+)
 
 if t.TYPE_CHECKING:
-    from qgis.core import QgsCoordinateReferenceSystem, QgsGeometry
+    from qgis.core import QgsGeometry
 
 
 class Extent(t.NamedTuple):
@@ -29,8 +36,8 @@ class Extent(t.NamedTuple):
     epsg: str
 
     @staticmethod
-    def from_raster(raster: QgsRasterLayer, epsg: str | None = None):
-        extent = raster.extent()
+    def from_raster(raster: Raster, epsg: str | None = None):
+        extent = raster.layer.extent()
         if epsg is None:
             epsg = raster.crs().geographicCrsAuthId()
         if not epsg:
@@ -60,6 +67,12 @@ class Raster:
     def __sub__(self: T, other: T) -> T:
         return self.difference(other)
 
+    def crs(self) -> QgsCoordinateReferenceSystem:
+        crs = self.layer.metadata().crs()
+        if not crs.isValid():
+            crs = self.layer.crs()
+        return crs
+
     def difference(self: T, other: Raster) -> T:
         return type(self)(
             QgsRasterLayer(
@@ -82,37 +95,166 @@ class Raster:
             )
         )
 
+    # def statistics(self) -> dict[str, t.Any]:
+    #     return processing.run(
+    #         'native:rasterlayerstatistics',
+    #         {
+    #             'INPUT': self.layer,
+    #             'BAND': 1,
+    #             'OUTPUT_HTML_FILE': 'TEMPORARY_OUTPUT',
+    #         },
+    #     )
+
+    def invert(self: T) -> T:
+        return type(self)(
+            QgsRasterLayer(
+                processing.run(
+                    'sagang:invertgrid',
+                    {
+                        'GRID': self.layer,
+                        'INVERSE': 'TEMPORARY_OUTPUT',
+                    },
+                )['INVERSE']
+            )
+        )
+
+    def mean(self: T, other: Raster) -> T:
+        return type(self)(
+            QgsRasterLayer(
+                processing.run(
+                    'native:rastercalc',
+                    {
+                        'LAYERS': [
+                            self.layer,
+                            other.layer,
+                        ],
+                        'EXPRESSION': f'("{self.layer.name()}@1"+"{other.layer.name()}@1") / 2',
+                        'EXTENT': None,
+                        'CELL_SIZE': None,
+                        'CRS': None,
+                        'OUTPUT': 'TEMPORARY_OUTPUT',
+                    },
+                )['OUTPUT'],
+                self.layer.name(),
+                'gdal',
+            )
+        )
+
     @property
     def extent(self) -> Extent:
-        return Extent.from_raster(self.layer)
+        return Extent.from_raster(self)
+
+    def fillna(
+        self: T, value: float = 0, output: str = 'TEMPORARY_OUTPUT'
+    ) -> T:
+        return type(self)(
+            QgsRasterLayer(
+                processing.run(
+                    'native:fillnodata',
+                    {
+                        'INPUT': self.layer,
+                        'BAND': 1,
+                        'FILL_VALUE': value,
+                        'OUTPUT': output,
+                    },
+                )['OUTPUT']
+            )
+        )
+
+    @classmethod
+    def from_rasters(
+        cls, rasters: c.Sequence[Raster], output: str = 'TEMPORARY_OUTPUT'
+    ) -> Raster:
+        return cls(
+            QgsRasterLayer(
+                processing.run(
+                    'gdal:merge',
+                    {
+                        'INPUT': [raster.layer for raster in rasters],
+                        'PCT': False,
+                        'SEPARATE': False,
+                        'NODATA_INPUT': None,
+                        'NODATA_OUTPUT': None,
+                        'OPTIONS': '',
+                        'EXTRA': '',
+                        'DATA_TYPE': 5,
+                        'OUTPUT': output,
+                    },
+                )['OUTPUT'],
+                'merged',
+                'gdal',
+            )
+        )
 
     def apply_mask(
         self: T, mask: QgsVectorLayer, output: str = 'TEMPORARY_OUTPUT'
     ) -> T:
-        masked = processing.run(
-            'gdal:cliprasterbymasklayer',
-            {
-                'INPUT': self.layer,
-                'MASK': mask,
-                'SOURCE_CRS': self.layer.crs(),
-                'TARGET_CRS': self.layer.crs(),
-                'TARGET_EXTENT': None,
-                'NODATA': None,
-                'ALPHA_BAND': False,
-                'CROP_TO_CUTLINE': True,
-                'KEEP_RESOLUTION': False,
-                'SET_RESOLUTION': False,
-                'X_RESOLUTION': None,
-                'Y_RESOLUTION': None,
-                'MULTITHREADING': False,
-                'OPTIONS': None,
-                'DATA_TYPE': 0,
-                'EXTRA': '',
-                'OUTPUT': output,
-            },
-        )
+        # masked = processing.run(
+        #     'gdal:cliprasterbymasklayer',
+        #     {
+        #         'INPUT': self.layer,
+        #         'MASK': mask,
+        #         'SOURCE_CRS': self.layer.crs(),
+        #         'TARGET_CRS': self.layer.crs(),
+        #         'TARGET_EXTENT': None,
+        #         'NODATA': None,
+        #         'ALPHA_BAND': False,
+        #         'CROP_TO_CUTLINE': True,
+        #         'KEEP_RESOLUTION': False,
+        #         'SET_RESOLUTION': False,
+        #         'X_RESOLUTION': None,
+        #         'Y_RESOLUTION': None,
+        #         'MULTITHREADING': False,
+        #         'OPTIONS': None,
+        #         'DATA_TYPE': 0,
+        #         'EXTRA': '',
+        #         'OUTPUT': output,
+        #     },
+        # )
+        # return type(self)(
+        #     QgsRasterLayer(masked['OUTPUT'], self.layer.name(), 'gdal')
+        # )
         return type(self)(
-            QgsRasterLayer(masked['OUTPUT'], self.layer.name(), 'gdal')
+            QgsRasterLayer(
+                processing.run(
+                    'sagang:cliprasterwithpolygon',
+                    {
+                        'INPUT': [
+                            self.layer,
+                        ],
+                        'OUTPUT': output,
+                        'POLYGONS': mask,
+                        'EXTENT': 2,
+                    },
+                )['OUTPUT'],
+                self.layer.name(),
+                'gdal',
+            )
+        )
+
+    def rank_filter(
+        self: T,
+        rank: int,
+        kernel_radius: int = 2,
+        context: QgsProcessingContext | None = None,
+        feedback: QgsProcessingFeedback | None = None,
+        output: str = 'TEMPORARY_OUTPUT',
+    ) -> T:
+        return type(self)(
+            QgsRasterLayer(
+                processing.run(
+                    'sagang:rankfilter',
+                    {
+                        'INPUT': self.layer,
+                        'RESULT': output,
+                        'RANK': rank,
+                        'KERNEL_TYPE': 1,
+                        'KERNEL_RADIUS': kernel_radius,
+                    },
+                )['RESULT'],
+                self.layer.name(),
+                'gdal',
+            ),
         )
 
     def align_to(
@@ -145,6 +287,10 @@ class Raster:
         return type(self)(
             QgsRasterLayer(aligned['OUTPUT'], self.layer.name(), 'gdal')
         )
+
+    def with_name(self: T, name: str) -> T:
+        self.layer.setName(name)
+        return self
 
     def raster_volume(self: T) -> T:
         cell_area = (
@@ -215,6 +361,31 @@ class Raster:
             )
         )
 
+    def statistics(self) -> dict[str, t.Any]:
+        return processing.run(
+            'native:rasterlayerstatistics',
+            {
+                'INPUT': self.layer,
+                'BAND': 1,
+                'OUTPUT_HTML_FILE': 'TEMPORARY_OUTPUT',
+            },
+        )
+
+    def zonal_statistics(
+        self, vector: QgsVectorLayer, column_prefix: str = 'stat_'
+    ) -> QgsVectorLayer:
+        return processing.run(
+            'native:zonalstatisticsfb',
+            {
+                'INPUT': vector,
+                'INPUT_RASTER': '/media/alex/alex/python-modules-packages-utils/gully-analysis/data/date/soldanesti_amonte/soldanesti_amonte_2012.tif',
+                'RASTER_BAND': 1,
+                'COLUMN_PREFIX': column_prefix,
+                'STATISTICS': [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11],
+                'OUTPUT': 'TEMPORARY_OUTPUT',
+            },
+        )['OUTPUT']
+
 
 @dataclass
 class DEM(Raster):
@@ -250,14 +421,64 @@ class DEM(Raster):
         )
         return DEM(
             QgsRasterLayer(
-                dem_preproc['DEM_PREPROC'], 'DEM_sink_removed', 'gdal'
+                dem_preproc['DEM_PREPROC'],
+                f'{self.layer.name()}_no_sinks',
+                'gdal',
             )
+        )
+
+    def flow_accumulation(self) -> Raster:
+        return Raster(
+            QgsRasterLayer(
+                processing.run(
+                    'sagang:flowaccumulationparallelizable',
+                    {
+                        'DEM': self.layer,
+                        'FLOW': 'TEMPORARY_OUTPUT',
+                        'UPDATE': 100,
+                        'METHOD': 0,
+                        'CONVERGENCE': 1.1,
+                    },
+                )['FLOW'],
+                f'{self.layer.name()}_flow_accumulation',
+                'gdal',
+            )
+        )
+
+    def channel_network(
+        self,
+        flow_accumulation: Raster | None = None,
+        output: str = 'TEMPORARY_OUTPUT',
+    ) -> QgsVectorLayer:
+        if flow_accumulation is None:
+            flow_accumulation = self.flow_accumulation()
+        return QgsVectorLayer(
+            processing.run(
+                'sagang:channelnetwork',
+                {
+                    'ELEVATION': self.layer,
+                    'SINKROUTE': None,
+                    'CHNLNTWRK': 'TEMPORARY_OUTPUT',
+                    'CHNLROUTE': 'TEMPORARY_OUTPUT',
+                    'SHAPES': output,
+                    'INIT_GRID': flow_accumulation.layer,
+                    'INIT_METHOD': 2,
+                    'INIT_VALUE': flow_accumulation.statistics()['MEAN'],
+                    # 'INIT_VALUE': 0,
+                    'DIV_GRID': None,
+                    'DIV_CELLS': 5,
+                    'TRACE_WEIGHT': None,
+                    'MINLEN': 10,
+                },
+            )['SHAPES'],
+            f'{self.layer.name()}_channel_network',
+            'ogr',
         )
 
     def flow_path_profiles_from_points(
         self,
-        points: t.Sequence[QgsGeometry],
-        eps: float,
+        points: c.Sequence[QgsGeometry],
+        tolerance: float = 0.5,
         context: QgsProcessingContext | None = None,
         feedback: QgsProcessingFeedback | None = None,
     ) -> list[QgsGeometry]:
@@ -276,6 +497,8 @@ class DEM(Raster):
             context=context,
             feedback=feedback,
         )
+        points_layer = geometries_to_layer(points)
+
         profile_paths = list(Path(profiles['LINE']).parent.glob('*.shp'))
         if len(profile_paths) > 1:
             profile_paths = sorted(
@@ -283,27 +506,39 @@ class DEM(Raster):
                 key=lambda path: int(path.stem.replace('LINE', '')),
             )
         profiles = list(get_geometries_from_path(*profile_paths))
-        return [
-            next(snap_to_geometry([profile], [pour_point], tolerance=eps))
-            for profile, pour_point in zip(profiles, points)
-        ]
+        valid = [profile for profile in profiles if profile.isGeosValid()]
+        profiles_layer = geometries_to_layer(valid)
+        snapped_profiles = processing.run(
+            'native:snapgeometries',
+            {
+                'INPUT': profiles_layer,
+                'REFERENCE_LAYER': points_layer,
+                'TOLERANCE': tolerance,
+                'BEHAVIOR': 6,
+                'OUTPUT': 'TEMPORARY_OUTPUT',
+            },
+        )['OUTPUT']
+        return list(get_geometries_from_layer(snapped_profiles))
 
     def sample(
         self,
-        lines: c.Sequence[QgsGeometry],
+        lines: c.Sequence[QgsGeometry] | QgsVectorLayer,
         feedback: QgsProcessingFeedback | None = None,
         context: QgsProcessingContext | None = None,
+        output: str = 'TEMPORARY_OUTPUT',
     ) -> QgsVectorLayer:
-        layer = geometries_to_layer(lines)
+        if isinstance(lines, c.Sequence):
+            lines = geometries_to_layer(lines)
+        lines.setCrs(self.layer.crs())
 
         profiles = processing.run(
             'sagang:profilesfromlines',
             {
                 'DEM': self.layer,
                 'VALUES': None,
-                'LINES': layer,
+                'LINES': lines,
                 'NAME': 'FID',
-                'PROFILE': 'TEMPORARY_OUTPUT',
+                'PROFILE': output,
                 'PROFILES': 'TEMPORARY_OUTPUT',
                 'SPLIT': False,
             },
@@ -384,100 +619,248 @@ def inverse_distance_weighted(
     )
 
 
+# @dataclass
+# class VolumeEvaluatorFuture:
+#     estimation_dem: DEM
+#     truth_dem: DEM
+#     gully_cover: DEM
+#     estimation_surface: QgsVectorLayer
+#     out_dir: Path
+#     crs: QgsCoordinateReferenceSystem
+
+#     def __post_init__(self):
+#         self.estimation_dem = self.estimation_dem.apply_mask(
+#             self.estimation_surface,
+#             output=(
+#                 self.out_dir / f'masked_{self.estimation_dem.layer.name()}.tif'
+#             ).as_posix(),
+#         )
+#         self.truth_dem = self.truth_dem.apply_mask(
+#             self.estimation_surface,
+#             output=(
+#                 self.out_dir / f'masked_{self.truth_dem.layer.name()}.tif'
+#             ).as_posix(),
+#         )
+#         self.gully_cover = self.gully_cover.apply_mask(
+#             self.estimation_surface,
+#             output=(
+#                 self.out_dir / f'masked_{self.gully_cover.layer.name()}.tif'
+#             ).as_posix(),
+#         )
+#         for layer in (
+#             self.estimation_dem,
+#             self.truth_dem,
+#             self.gully_cover,
+#         ):
+#             layer.layer.setCrs(self.crs)
+
+#     def get_masked(self) -> list[DEM]:
+#         return [
+#             dem.apply_mask(self.estimation_surface)
+#             for dem in (
+#                 self.estimation_dem,
+#                 self.truth_dem,
+#                 self.gully_cover,
+#             )
+#         ]
+
+#     def evaluate(self) -> QgsVectorLayer:
+#         # NOTE: This does not account for the values which are negative
+#         truth_diff = self.gully_cover - self.truth_dem
+#         truth_volume = truth_diff.raster_volume()
+#         estimated_diff = self.gully_cover - self.estimation_dem
+#         estimated_volume = estimated_diff.raster_volume()
+#         truth_zonal = processing.run(
+#             'native:zonalstatisticsfb',
+#             {
+#                 'INPUT': self.estimation_surface,
+#                 'INPUT_RASTER': truth_volume.layer,
+#                 'RASTER_BAND': 1,
+#                 'COLUMN_PREFIX': 'truth_',
+#                 'STATISTICS': [1],  # this is sum
+#                 'OUTPUT': 'TEMPORARY_OUTPUT',
+#             },
+#         )['OUTPUT']
+#         estimated_zonal = processing.run(
+#             'native:zonalstatisticsfb',
+#             {
+#                 'INPUT': truth_zonal,
+#                 'INPUT_RASTER': estimated_volume.layer,
+#                 'RASTER_BAND': 1,
+#                 'COLUMN_PREFIX': 'estimated_',
+#                 'STATISTICS': [1],  # this is sum
+#                 'OUTPUT': 'TEMPORARY_OUTPUT',
+#             },
+#         )['OUTPUT']
+
+#         with_error = processing.run(
+#             'native:fieldcalculator',
+#             {
+#                 'INPUT': estimated_zonal,
+#                 'FIELD_NAME': 'error',
+#                 'FIELD_TYPE': 0,
+#                 'FIELD_LENGTH': 0,
+#                 'FIELD_PRECISION': 0,
+#                 'FORMULA': 'abs("truth_sum" -  "estimated_sum") / "truth_sum"',
+#                 'OUTPUT': 'TEMPORARY_OUTPUT',
+#             },
+#         )['OUTPUT']
+
+#         return with_error
+
+
 @dataclass
 class VolumeEvaluator:
-    dem: DEM
-    estimation_dem: DEM
-    truth_dem: DEM
-    gully_cover: DEM
+    past_dem: DEM
+    future_dem: DEM
+    future_limit: QgsGeometry
+    past_boundary: QgsVectorLayer
     estimation_surface: QgsVectorLayer
+    gully_cover: DEM
     out_dir: Path
-    crs: QgsCoordinateReferenceSystem
+    validation_future_dem: DEM | None = None
+    validation_past_dem: DEM | None = None
+    validation_gully_cover: DEM | None = field(init=False, default=None)
 
-    def __post_init__(self):
-        self.dem = self.dem.apply_mask(
-            self.estimation_surface,
-            output=(
-                self.out_dir / f'masked_{self.dem.layer.name()}.tif'
-            ).as_posix(),
-        )
-        self.estimation_dem = self.estimation_dem.apply_mask(
-            self.estimation_surface,
-            output=(
-                self.out_dir / f'masked_{self.estimation_dem.layer.name()}.tif'
-            ).as_posix(),
-        )
-        self.truth_dem = self.truth_dem.apply_mask(
-            self.estimation_surface,
-            output=(
-                self.out_dir / f'masked_{self.truth_dem.layer.name()}.tif'
-            ).as_posix(),
-        )
-        self.gully_cover = self.gully_cover.apply_mask(
-            self.estimation_surface,
-            output=(
-                self.out_dir / f'masked_{self.gully_cover.layer.name()}.tif'
-            ).as_posix(),
-        )
-        for layer in (
-            self.dem,
-            self.estimation_dem,
-            self.truth_dem,
-            self.gully_cover,
-        ):
-            layer.layer.setCrs(self.crs)
+    def __post_init__(self) -> None:
+        if self.validation_past_dem is not None:
+            self.validation_past_dem.layer.rasterUnitsPerPixelX()
 
-    def get_masked(self) -> list[DEM]:
-        return [
-            dem.apply_mask(self.estimation_surface)
-            for dem in (
-                self.dem,
-                self.estimation_dem,
-                self.truth_dem,
-                self.gully_cover,
+            self.validation_gully_cover = (
+                self.validation_past_dem.rank_filter(rank=50)
+                .align_to(self.validation_past_dem)
+                .with_name('validation_gully_cover')
             )
-        ]
+            # self.validation_gully_cover = (
+            #    multilevel_b_spline(
+            #        self.validation_past_dem.sample(
+            #            [self.future_limit],
+            #            output=(
+            #                self.out_dir / 'validation_past_dem_samples.shp'
+            #            ).as_posix(),
+            #        ),
+            #        cell_size,
+            #        level=14,
+            #        output=(
+            #            self.out_dir / 'validation_gully_cover.sdat'
+            #        ).as_posix(),
+            #    )
+            #    .align_to(self.validation_past_dem)
+            #    .with_name('validation_gully_cover')
+            # )
 
-    def evaluate(self) -> QgsVectorLayer:
-        # NOTE: This does not account for the values which are negative
-        truth_diff = self.gully_cover - self.truth_dem
-        truth_volume = truth_diff.raster_volume()
-        estimated_diff = self.gully_cover - self.estimation_dem
-        estimated_volume = estimated_diff.raster_volume()
-        truth_zonal = processing.run(
+    def evaluate(self, project: QgsProject) -> QgsVectorLayer:
+        assert self.gully_cover is not None
+        if self.validation_gully_cover:
+            project.addMapLayer(self.validation_gully_cover.layer)
+        past = intersection(self.estimation_surface, self.past_boundary)
+        future = difference(self.estimation_surface, self.past_boundary)
+        gully_future_volume = (
+            (
+                self.gully_cover.apply_mask(future)
+                - self.future_dem.apply_mask(future)
+            )
+            .raster_volume()
+            .with_name('gully_future_volume')
+        )
+        gully_past_volume = (
+            (self.past_dem.apply_mask(past) - self.future_dem.apply_mask(past))
+            .raster_volume()
+            .with_name('gully_past_volume')
+        )
+        truth = None
+        if self.validation_past_dem is not None:
+            # assert self.validation_gully_cover is not None
+            # gully_past_volume_truth = (
+            #    (
+            #        self.validation_past_dem.apply_mask(past)
+            #        - self.future_dem.apply_mask(past)
+            #    )
+            #    .raster_volume()
+            #    .with_name('gully_past_volume_truth')
+            # )
+            # gully_future_volume_truth = (
+            #    (
+            #        self.validation_gully_cover.apply_mask(future)
+            #        - self.future_dem.apply_mask(future)
+            #    )
+            #    .raster_volume()
+            #    .with_name('gully_future_volume_truth')
+            # )
+            # truth = Raster.from_rasters(
+            #    [gully_future_volume_truth, gully_past_volume_truth]
+            # ).with_name('truth')
+            truth = (
+                (
+                    self.validation_past_dem.apply_mask(self.estimation_surface)
+                    - self.future_dem.apply_mask(self.estimation_surface)
+                )
+                .raster_volume()
+                .with_name('truth')
+            )
+        elif self.validation_future_dem is not None:
+            assert self.gully_cover is not None
+            gully_future_volume_truth = (
+                (
+                    self.gully_cover.apply_mask(future)
+                    - self.validation_future_dem.apply_mask(future)
+                )
+                .raster_volume()
+                .with_name('gully_future_volume_truth')
+            )
+            gully_past_volume_truth = (
+                (
+                    self.past_dem.apply_mask(past)
+                    - self.validation_future_dem.apply_mask(past)
+                )
+                .raster_volume()
+                .with_name('gully_past_volume')
+            )
+            truth = Raster.from_rasters(
+                [gully_future_volume_truth, gully_past_volume_truth]
+            ).with_name('truth')
+        estimation = Raster.from_rasters(
+            [gully_future_volume, gully_past_volume]
+        ).with_name('estimation')
+        project.addMapLayer(estimation.layer)
+        zonal_statistics = processing.run(
             'native:zonalstatisticsfb',
             {
                 'INPUT': self.estimation_surface,
-                'INPUT_RASTER': truth_volume.layer,
-                'RASTER_BAND': 1,
-                'COLUMN_PREFIX': 'truth_',
-                'STATISTICS': [1],  # this is sum
-                'OUTPUT': 'TEMPORARY_OUTPUT',
-            },
-        )['OUTPUT']
-        estimated_zonal = processing.run(
-            'native:zonalstatisticsfb',
-            {
-                'INPUT': truth_zonal,
-                'INPUT_RASTER': estimated_volume.layer,
+                'INPUT_RASTER': estimation.layer,
                 'RASTER_BAND': 1,
                 'COLUMN_PREFIX': 'estimated_',
                 'STATISTICS': [1],  # this is sum
                 'OUTPUT': 'TEMPORARY_OUTPUT',
             },
         )['OUTPUT']
+        if truth is not None:
+            project.addMapLayer(truth.layer)
+            zonal_statistics = processing.run(
+                'native:zonalstatisticsfb',
+                {
+                    'INPUT': zonal_statistics,
+                    'INPUT_RASTER': truth.layer,
+                    'RASTER_BAND': 1,
+                    'COLUMN_PREFIX': 'truth_',
+                    'STATISTICS': [1],  # this is sum
+                    'OUTPUT': 'TEMPORARY_OUTPUT',
+                },
+            )['OUTPUT']
 
-        with_error = processing.run(
-            'native:fieldcalculator',
-            {
-                'INPUT': estimated_zonal,
-                'FIELD_NAME': 'error',
-                'FIELD_TYPE': 0,
-                'FIELD_LENGTH': 0,
-                'FIELD_PRECISION': 0,
-                'FORMULA': 'abs("truth_sum" -  "estimated_sum") / "truth_sum"',
-                'OUTPUT': 'TEMPORARY_OUTPUT',
-            },
-        )['OUTPUT']
-
-        return with_error
+            with_error = processing.run(
+                'native:fieldcalculator',
+                {
+                    'INPUT': zonal_statistics,
+                    'FIELD_NAME': 'error',
+                    'FIELD_TYPE': 0,
+                    'FIELD_LENGTH': 0,
+                    'FIELD_PRECISION': 0,
+                    'FORMULA': 'abs("truth_sum" -  "estimated_sum") / "truth_sum"',
+                    'OUTPUT': 'TEMPORARY_OUTPUT',
+                },
+            )['OUTPUT']
+            project.addMapLayer(with_error)
+            return with_error
+        project.addMapLayer(zonal_statistics)
+        return zonal_statistics

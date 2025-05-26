@@ -43,7 +43,7 @@ class Endpoints(t.NamedTuple):
 
 
 def intersection_points(
-    lines: c.Iterable[QgsGeometry], polygon: QgsGeometry, tolerance: float
+    lines: c.Iterable[QgsGeometry], geometry: QgsGeometry, tolerance: float
 ) -> list[QgsGeometry]:
     """
     Finds the intersection points between the lines and the polygon exterior.
@@ -51,7 +51,7 @@ def intersection_points(
     The endpoints of the lines which intersect the polygon exterior
     rings are not returned.
     """
-    as_line = polygon_to_line(polygon)
+    as_line = to_linestring(geometry)
     intersections: list[QgsGeometry] = []
     for line in lines:
         endpoints = Endpoints.from_linestring(line)
@@ -68,6 +68,10 @@ def intersection_points(
             if intersection.constGet() not in endpoints:
                 intersections.append(intersection)
     return intersections
+
+
+def get_longest(geometries: c.Sequence[QgsGeometry]) -> QgsGeometry:
+    return sorted(geometries, key=QgsGeometry.length)[-1]
 
 
 def remove_duplicated(
@@ -128,7 +132,6 @@ class Centerlines(UserList[QgsGeometry]):
             dissolved = dissolve_layer(geometry_fixed)
             polygon = get_first_geometry(dissolved)
             thin = cls.get_thin_from_roundness(roundness(polygon))
-            print(f'Using {thin=}')
 
         centerline = processing.run(
             'grass:v.voronoi.skeleton',
@@ -181,6 +184,10 @@ class Centerlines(UserList[QgsGeometry]):
         )
 
 
+def intersects(geometry: QgsGeometry, others: c.Sequence[QgsGeometry]) -> bool:
+    return any(geometry.intersects(other) for other in others)
+
+
 def roundness(geometry: QgsGeometry) -> float:
     area = geometry.area()
     perimeter = geometry.length()
@@ -189,8 +196,8 @@ def roundness(geometry: QgsGeometry) -> float:
 
 def fix_geometry(
     layer: QgsVectorLayer,
-    context: QgsProcessingContext,
-    feedback: QgsProcessingFeedback,
+    context: QgsProcessingContext | None = None,
+    feedback: QgsProcessingFeedback | None = None,
 ) -> QgsVectorLayer:
     """Always converts to multi-geometry layer."""
     return processing.run(
@@ -211,7 +218,7 @@ def check_incorrect_geometry(
     return None
 
 
-def polygon_to_line(polygon: QgsGeometry) -> QgsGeometry:
+def to_linestring(polygon: QgsGeometry) -> QgsGeometry:
     """Coerces a polygon to a MultiLineString."""
     return polygon.coerceToType(Qgis.WkbType.MultiLineString)[0]
 
@@ -220,9 +227,12 @@ def snap_to_geometry(
     geometries: c.Sequence[QgsGeometry],
     snap_to: c.Sequence[QgsGeometry],
     tolerance: float,
+    mode: QgsGeometrySnapper.SnapMode = QgsGeometrySnapper.SnapMode.PreferClosest,
 ) -> c.Generator[QgsGeometry, None, None]:
     for geometry in geometries:
-        yield QgsGeometrySnapper.snapGeometry(geometry, tolerance, snap_to)
+        yield QgsGeometrySnapper.snapGeometry(
+            geometry, tolerance, snap_to, mode=mode
+        )
 
 
 class GeometryError(Exception): ...
@@ -244,3 +254,46 @@ class MultipartGeometryFound(GeometryError):
     def __init__(self, message: str | None = None):
         self.message = self.default_message if message is None else message
         super().__init__(self.message)
+
+
+def get_line_intersections(lines: QgsVectorLayer) -> QgsVectorLayer:
+    union = processing.run(
+        'native:union',
+        {
+            'INPUT': lines,
+            'OVERLAY': None,
+            'OVERLAY_FIELDS_PREFIX': '',
+            'OUTPUT': 'TEMPORARY_OUTPUT',
+            'GRID_SIZE': None,
+        },
+    )['OUTPUT']
+    cleaned = processing.run(
+        'native:deleteduplicategeometries',
+        {
+            'INPUT': union,
+            'OUTPUT': 'TEMPORARY_OUTPUT',
+        },
+    )['OUTPUT']
+
+    line_intersections = processing.run(
+        'native:lineintersections',
+        {
+            'INPUT': cleaned,
+            'INTERSECT': cleaned,
+            'INPUT_FIELDS': [],
+            'INTERSECT_FIELDS': [],
+            'INTERSECT_FIELDS_PREFIX': '',
+            'OUTPUT': 'TEMPORARY_OUTPUT',
+        },
+    )
+    return line_intersections['OUTPUT']
+
+
+def multipart_to_singlepart(geometries: QgsVectorLayer) -> QgsVectorLayer:
+    return processing.run(
+        'native:multiparttosingleparts',
+        {
+            'INPUT': geometries,
+            'OUTPUT': 'TEMPORARY_OUTPUT',
+        },
+    )['OUTPUT']
