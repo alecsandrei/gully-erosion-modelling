@@ -1,3 +1,2 @@
-# The latest pure Python version of the library
-# (no C extensions and works with all operating systems)
-ruptures==1.0.6
+ruptures
+scipy
