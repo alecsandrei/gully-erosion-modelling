@@ -717,7 +717,7 @@ class VolumeEvaluator:
     past_boundary: QgsVectorLayer
     estimation_surface: QgsVectorLayer
     gully_cover: DEM
-    out_dir: Path
+    out_file: Path
     validation_future_dem: DEM | None = None
     validation_past_dem: DEM | None = None
     validation_gully_cover: DEM | None = field(init=False, default=None)
@@ -831,7 +831,9 @@ class VolumeEvaluator:
                 'RASTER_BAND': 1,
                 'COLUMN_PREFIX': 'estimated_',
                 'STATISTICS': [1],  # this is sum
-                'OUTPUT': 'TEMPORARY_OUTPUT',
+                'OUTPUT': 'TEMPORARY_OUTPUT'
+                if truth is None
+                else self.out_file.as_posix(),
             },
         )['OUTPUT']
         if truth is not None:
@@ -857,10 +859,8 @@ class VolumeEvaluator:
                     'FIELD_LENGTH': 0,
                     'FIELD_PRECISION': 0,
                     'FORMULA': 'abs("truth_sum" -  "estimated_sum") / "truth_sum"',
-                    'OUTPUT': 'TEMPORARY_OUTPUT',
+                    'OUTPUT': self.out_file.as_posix(),
                 },
             )['OUTPUT']
-            project.addMapLayer(with_error)
             return with_error
-        project.addMapLayer(zonal_statistics)
         return zonal_statistics
