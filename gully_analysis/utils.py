@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import collections.abc as c
+import contextlib
 import itertools
+import time
 import typing as t
 
 import processing
@@ -185,3 +187,13 @@ def geometries_to_layer(
 
     assert layer.featureCount() == len(geoms)
     return layer
+
+
+@contextlib.contextmanager
+def timeit(name: str):
+    """Context manager to time a block of code."""
+
+    start = time.time()
+    yield
+    end = time.time()
+    print(f'{name} took {end - start:.2f} seconds to execute.')
