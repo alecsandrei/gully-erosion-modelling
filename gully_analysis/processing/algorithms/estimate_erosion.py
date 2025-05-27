@@ -596,12 +596,9 @@ class EstimateErosionFuture(QgsProcessingAlgorithm):
                 future_limit=gully_future_limit,
                 past_boundary=gully_boundary,
                 gully_cover=gully_cover,
-                out_dir=out_dir,
+                out_file=Path(estimation_surface_output),
             )
-            layer = evaluator.evaluate(project)
-            if debug_mode:
-                project.addMapLayer(layer)
-            export(layer, Path(estimation_surface_output))
+            evaluator.evaluate(project)
             results[self.ESTIMATION_SURFACE_OUTPUT] = estimation_surface_output
 
         return results
