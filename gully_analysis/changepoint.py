@@ -1,8 +1,7 @@
 from __future__ import annotations
 
 import collections.abc as c
-import concurrent.futures
-import itertools
+import reprlib
 import typing as t
 from dataclasses import dataclass
 from pathlib import Path
@@ -13,7 +12,11 @@ import processing
 import ruptures as rpt
 from qgis.core import (
     QgsCoordinateReferenceSystem,
+    QgsExpression,
+    QgsExpressionContext,
+    QgsExpressionContextUtils,
     QgsFeature,
+    QgsFeatureRequest,
     QgsVectorLayer,
     edit,
 )
@@ -138,49 +141,52 @@ def estimate_gully_simpler(
     return profile_to_estimate
 
 
+# def filter_on_id_line(
+#    line_id: int, samples: QgsVectorLayer
+# ) -> list[QgsFeature]:
+#    col = 'ID_LINE'
+#    iterator = samples.getFeatures(expression=f'"{col}" = {line_id}')
+#    if iterator.compileFailed():
+#        raise Exception(f'Failed to filter the samples on {col}.')
+#    return list(iterator)  # type: ignore
 def filter_on_id_line(
     line_id: int, samples: QgsVectorLayer
 ) -> list[QgsFeature]:
+    """Filters features by ID_LINE value more efficiently."""
     col = 'ID_LINE'
-    iterator = samples.getFeatures(expression=f'"{col}" = {line_id}')
-    if iterator.compileFailed():
-        raise Exception(f'Failed to filter the samples on {col}.')
-    return list(iterator)  # type: ignore
+    expr = QgsExpression(f'"{col}" = {line_id}')
+    if expr.hasParserError():
+        raise Exception(
+            f'Parser error in expression: {expr.parserErrorString()}'
+        )
+    context = QgsExpressionContext()
+    context.appendScopes(
+        QgsExpressionContextUtils.globalProjectLayerScopes(samples)
+    )
+    request = QgsFeatureRequest(expr)
+    request.setExpressionContext(context)
+    request.setSubsetOfAttributes(['ID_LINE', 'Z'], samples.fields())
 
-
-def samples_to_ndarray(samples: c.Iterable[QgsFeature]) -> np.ndarray:
-    return np.array([sample.attribute('Z') for sample in samples])
+    return list(samples.getFeatures(request))
 
 
 def get_changepoints(samples: np.ndarray, penalty: int) -> list[int]:
-    algorithm = rpt.Pelt(model='l2').fit(samples)
-    return algorithm.predict(pen=penalty)
+    # algorithm = rpt.Pelt(model='l1').fit(samples)
+    # Same as above, but written in C
+    algo_c = rpt.KernelCPD(kernel='linear').fit(samples)
+    return algo_c.predict(pen=penalty)
 
 
 def estimate_gully_head(
-    profile_samples: c.Sequence[QgsFeature],
-    profile_to_estimate_samples: c.Sequence[QgsFeature],
+    profile_samples: np.ndarray,
+    profile_to_estimate_samples: np.ndarray,
     line_id: int,
-    profile_gully_cover: c.Sequence[QgsFeature] | None = None,
-    profile_truth_samples: c.Sequence[QgsFeature] | None = None,
+    profile_gully_cover: np.ndarray | None = None,
+    profile_truth_samples: np.ndarray | None = None,
     changepoint_penalty: int = 10,
-) -> list[QgsFeature] | None:
-    profile_samples_ndarray = samples_to_ndarray(profile_samples)
-    profile_to_estimate_samples_ndarray = samples_to_ndarray(
-        profile_to_estimate_samples
-    )
-    profile_gully_cover_ndarray = (
-        samples_to_ndarray(profile_gully_cover)
-        if profile_gully_cover is not None
-        else None
-    )
-    profile_truth_samples_ndarray = (
-        samples_to_ndarray(profile_truth_samples)
-        if profile_truth_samples is not None
-        else None
-    )
+) -> np.ndarray | None:
     changepoints = get_changepoints(
-        profile_samples_ndarray, penalty=changepoint_penalty
+        profile_samples, penalty=changepoint_penalty
     )
     if not changepoints:
         return None
@@ -192,20 +198,91 @@ def estimate_gully_head(
         / f'{line_id}.png'
     )
     estimated = estimate_gully_simpler(
-        profile=profile_samples_ndarray,
-        profile_to_estimate=profile_to_estimate_samples_ndarray,
+        profile=profile_samples,
+        profile_to_estimate=profile_to_estimate_samples,
         changepoints=changepoints,
         # debug_out_file=path_to_plots,
-        true_values=profile_truth_samples_ndarray,
-        gully_cover=profile_gully_cover_ndarray,
+        true_values=profile_truth_samples,
+        gully_cover=profile_gully_cover,
     )
 
-    estimated_features: list[QgsFeature] = []
-    for feature, z in zip(profile_to_estimate_samples, estimated):
-        estimated_feature = QgsFeature(feature)
-        estimated_feature.setAttribute('Z', z)
-        estimated_features.append(estimated_feature)
-    return estimated_features
+    return estimated
+
+
+def sampled_profiles_to_ndarray(
+    sampled_profiles: QgsVectorLayer,
+) -> dict[int, np.ndarray]:
+    """Converts sampled profiles to a dictionary of numpy arrays faster."""
+    # Get field indexes once
+    fields = sampled_profiles.fields()
+    idx_id_line = fields.indexOf('ID_LINE')
+    idx_z = fields.indexOf('Z')
+
+    # Prepare data
+    samples_dict: dict[int, list[float]] = {}
+
+    for feature in sampled_profiles.getFeatures():  # type: ignore
+        attrs = feature.attributes()
+        line_id = attrs[idx_id_line]
+        z_value = attrs[idx_z]
+        if z_value is None:
+            raise ValueError(f'Z value is None for feature {feature.id()}')
+        if line_id not in samples_dict:
+            samples_dict[line_id] = []
+        samples_dict[line_id].append(z_value)
+
+    return {
+        line_id: np.array(z_list) for line_id, z_list in samples_dict.items()
+    }
+
+
+def get_features_with_estimated_z(
+    input_layer: QgsVectorLayer,
+    results: dict[int, np.ndarray],
+    id_field: str = 'ID_LINE',
+    z_field: str = 'Z',
+) -> list[QgsFeature]:
+    """Returns a list of QgsFeature with updated Z attribute values from results dict."""
+    idx_line_id = input_layer.fields().indexOf(id_field)
+    if idx_line_id == -1:
+        raise ValueError(f'Field {id_field} not found in input layer fields.')
+    idx_z = input_layer.fields().indexOf(z_field)
+    if idx_z == -1:
+        raise ValueError(f'Field {z_field} not found in input layer fields.')
+
+    line_counters = {line_id: 0 for line_id in results}
+    updated_features = []
+
+    for feature in input_layer.getFeatures():
+        attrs = feature.attributes()
+        line_id = int(attrs[idx_line_id])
+
+        if line_id not in results:
+            print(
+                f'Line ID {line_id} not found in {reprlib.repr(results)}, skipping feature.'
+            )
+            raise Exception
+            continue
+
+        i = line_counters[line_id]
+        z_array = results[line_id]
+
+        if i >= len(z_array):
+            print(
+                f'Index {i} out of bounds for line ID {line_id} with {len(z_array)} Z values, skipping feature.'
+            )
+            continue
+
+        # Create updated feature
+        new_feat = QgsFeature(feature)
+        new_attrs = list(attrs)
+        new_attrs[idx_z] = float(z_array[i])
+        new_feat.setAttributes(new_attrs)
+
+        updated_features.append(new_feat)
+        line_counters[line_id] += 1
+
+    return updated_features
 
 
 def estimate_gully_heads(
@@ -216,43 +293,47 @@ def estimate_gully_heads(
     sampled_profiles_gully_cover: QgsVectorLayer | None = None,
     changepoint_penalty: int = 10,
 ) -> list[QgsFeature]:
-    def handle_line_id(line_id: int) -> None | list[QgsFeature]:
-        profiles_subset = filter_on_id_line(line_id, sampled_profiles)
-        profiles_to_estimate_subset = filter_on_id_line(
-            line_id, sampled_profiles_to_estimate
+    sampled_profiles_ndarray = sampled_profiles_to_ndarray(sampled_profiles)
+    sampled_profiles_to_estimate_ndarray = sampled_profiles_to_ndarray(
+        sampled_profiles_to_estimate
+    )
+    if sampled_profiles_truth is not None:
+        sampled_profiles_truth_ndarray = sampled_profiles_to_ndarray(
+            sampled_profiles_truth
         )
-        profiles_gully_cover_subset = None
-        if sampled_profiles_gully_cover is not None:
-            profiles_gully_cover_subset = filter_on_id_line(
-                line_id, sampled_profiles_gully_cover
-            )
-        profiles_truth_subset = None
-        if sampled_profiles_truth is not None:
-            profiles_truth_subset = filter_on_id_line(
-                line_id, sampled_profiles_truth
-            )
+    if sampled_profiles_gully_cover is not None:
+        sampled_profiles_gully_cover_ndarray = sampled_profiles_to_ndarray(
+            sampled_profiles_gully_cover
+        )
+
+    # def handle_line_id(line_id: int) -> None | list[QgsFeature]:
+    def handle_line_id(line_id: int) -> np.ndarray | None:
         estimated_gully_head = estimate_gully_head(
-            profiles_subset,
-            profiles_to_estimate_subset,
+            sampled_profiles_ndarray[line_id],
+            sampled_profiles_to_estimate_ndarray[line_id],
             line_id,
-            profile_gully_cover=profiles_gully_cover_subset,
-            profile_truth_samples=profiles_truth_subset,
+            profile_gully_cover=(
+                sampled_profiles_gully_cover_ndarray[line_id]
+                if sampled_profiles_gully_cover is not None
+                else None
+            ),
+            profile_truth_samples=(
+                sampled_profiles_truth_ndarray[line_id]
+                if sampled_profiles_truth is not None
+                else None
+            ),
             changepoint_penalty=changepoint_penalty,
         )
-        if estimated_gully_head is not None:
-            return estimated_gully_head
-        return None
+        if estimated_gully_head is None:
+            return None
+        return estimated_gully_head
 
-    # results = []
-    # for i in range(profile_count):
-    #    results.append(handle_line_id(i))
-    with concurrent.futures.ThreadPoolExecutor(max_workers=24) as executor:
-        results = executor.map(handle_line_id, range(profile_count))
-    return list(
-        itertools.chain.from_iterable(
-            result for result in results if result is not None
-        )
-    )
+    results: dict[int, np.ndarray] = {}
+    for i in range(profile_count):
+        estimated = handle_line_id(i)
+        if estimated is not None:
+            results[i] = estimated
+    return get_features_with_estimated_z(sampled_profiles_to_estimate, results)
 
 
 @dataclass
@@ -280,7 +361,6 @@ def get_estimated_samples(
     sampled_profiles_to_estimate = dem.sample(
         profiles_to_estimate, feedback=feedback, context=context
     )
-    context.project().addMapLayer(sampled_profiles_to_estimate)
 
     sampled_profiles_truth = None
     if dem_truth is not None:
