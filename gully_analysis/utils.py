@@ -90,14 +90,18 @@ def dissolve_layer(layer: QgsVectorLayer) -> QgsVectorLayer:
 
 def merge_vector_layers(
     layers: list[QgsVectorLayer],
-    crs: QgsCoordinateReferenceSystem,
+    crs: QgsCoordinateReferenceSystem | None = None,
+    add_source_fields: bool = False,
     output: str = 'TEMPORARY_OUTPUT',
 ) -> QgsVectorLayer:
+    if crs is None:
+        crs = layers[0].crs()
     return processing.run(
         'native:mergevectorlayers',
         {
             'LAYERS': layers,
             'CRS': crs,
+            'ADD_SOURCE_FIELDS': add_source_fields,
             'OUTPUT': output,
         },
     )['OUTPUT']

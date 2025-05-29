@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import abc
 import collections.abc as c
 import typing as t
 from dataclasses import dataclass, field
@@ -22,6 +23,7 @@ from .utils import (
     get_geometries_from_layer,
     get_geometries_from_path,
     intersection,
+    merge_vector_layers,
 )
 
 if t.TYPE_CHECKING:
@@ -214,6 +216,7 @@ class Raster:
         # return type(self)(
         #     QgsRasterLayer(masked['OUTPUT'], self.layer.name(), 'gdal')
         # )
+
         return type(self)(
             QgsRasterLayer(
                 processing.run(
@@ -371,21 +374,6 @@ class Raster:
             },
         )
 
-    def zonal_statistics(
-        self, vector: QgsVectorLayer, column_prefix: str = 'stat_'
-    ) -> QgsVectorLayer:
-        return processing.run(
-            'native:zonalstatisticsfb',
-            {
-                'INPUT': vector,
-                'INPUT_RASTER': '/media/alex/alex/python-modules-packages-utils/gully-analysis/data/date/soldanesti_amonte/soldanesti_amonte_2012.tif',
-                'RASTER_BAND': 1,
-                'COLUMN_PREFIX': column_prefix,
-                'STATISTICS': [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11],
-                'OUTPUT': 'TEMPORARY_OUTPUT',
-            },
-        )['OUTPUT']
-
 
 @dataclass
 class DEM(Raster):
@@ -475,20 +463,16 @@ class DEM(Raster):
             'ogr',
         )
 
-    def flow_path_profiles_from_points(
+    def least_cost_paths(
         self,
-        points: c.Sequence[QgsGeometry],
-        tolerance: float = 0.5,
+        source_points: QgsVectorLayer,
         context: QgsProcessingContext | None = None,
         feedback: QgsProcessingFeedback | None = None,
-    ) -> list[QgsGeometry]:
-        """Get flow path profiles from pour points."""
-        points_as_layer = geometries_to_layer(points, 'pour_points')
-        points_as_layer.setCrs(self.layer.crs())
-        profiles = processing.run(
+    ) -> dict[str, t.Any]:
+        return processing.run(
             'sagang:leastcostpaths',
             {
-                'SOURCE': points_as_layer,
+                'SOURCE': source_points,
                 'DEM': self.layer,
                 'VALUES': None,
                 'POINTS': 'TEMPORARY_OUTPUT',
@@ -497,9 +481,28 @@ class DEM(Raster):
             context=context,
             feedback=feedback,
         )
-        points_layer = geometries_to_layer(points)
 
-        profile_paths = list(Path(profiles['LINE']).parent.glob('*.shp'))
+    def flow_path_profiles_from_points(
+        self,
+        source_points: c.Sequence[QgsGeometry],
+        tolerance: float = 0.5,
+        context: QgsProcessingContext | None = None,
+        feedback: QgsProcessingFeedback | None = None,
+    ) -> list[QgsGeometry]:
+        """Get flow path profiles from pour points."""
+        source_points_as_layer = geometries_to_layer(
+            source_points, 'pour_points'
+        )
+        source_points_as_layer.setCrs(self.layer.crs())
+        source_points_layer = geometries_to_layer(source_points)
+        profiles_least_cost = self.least_cost_paths(
+            source_points_layer,
+            context=context,
+            feedback=feedback,
+        )
+        profile_paths = list(
+            Path(profiles_least_cost['LINE']).parent.glob('*.shp')
+        )
         if len(profile_paths) > 1:
             profile_paths = sorted(
                 profile_paths,
@@ -512,7 +515,7 @@ class DEM(Raster):
             'native:snapgeometries',
             {
                 'INPUT': profiles_layer,
-                'REFERENCE_LAYER': points_layer,
+                'REFERENCE_LAYER': source_points_as_layer,
                 'TOLERANCE': tolerance,
                 'BEHAVIOR': 6,
                 'OUTPUT': 'TEMPORARY_OUTPUT',
@@ -619,248 +622,258 @@ def inverse_distance_weighted(
     )
 
 
-# @dataclass
-# class VolumeEvaluatorFuture:
-#     estimation_dem: DEM
-#     truth_dem: DEM
-#     gully_cover: DEM
-#     estimation_surface: QgsVectorLayer
-#     out_dir: Path
-#     crs: QgsCoordinateReferenceSystem
-
-#     def __post_init__(self):
-#         self.estimation_dem = self.estimation_dem.apply_mask(
-#             self.estimation_surface,
-#             output=(
-#                 self.out_dir / f'masked_{self.estimation_dem.layer.name()}.tif'
-#             ).as_posix(),
-#         )
-#         self.truth_dem = self.truth_dem.apply_mask(
-#             self.estimation_surface,
-#             output=(
-#                 self.out_dir / f'masked_{self.truth_dem.layer.name()}.tif'
-#             ).as_posix(),
-#         )
-#         self.gully_cover = self.gully_cover.apply_mask(
-#             self.estimation_surface,
-#             output=(
-#                 self.out_dir / f'masked_{self.gully_cover.layer.name()}.tif'
-#             ).as_posix(),
-#         )
-#         for layer in (
-#             self.estimation_dem,
-#             self.truth_dem,
-#             self.gully_cover,
-#         ):
-#             layer.layer.setCrs(self.crs)
-
-#     def get_masked(self) -> list[DEM]:
-#         return [
-#             dem.apply_mask(self.estimation_surface)
-#             for dem in (
-#                 self.estimation_dem,
-#                 self.truth_dem,
-#                 self.gully_cover,
-#             )
-#         ]
-
-#     def evaluate(self) -> QgsVectorLayer:
-#         # NOTE: This does not account for the values which are negative
-#         truth_diff = self.gully_cover - self.truth_dem
-#         truth_volume = truth_diff.raster_volume()
-#         estimated_diff = self.gully_cover - self.estimation_dem
-#         estimated_volume = estimated_diff.raster_volume()
-#         truth_zonal = processing.run(
-#             'native:zonalstatisticsfb',
-#             {
-#                 'INPUT': self.estimation_surface,
-#                 'INPUT_RASTER': truth_volume.layer,
-#                 'RASTER_BAND': 1,
-#                 'COLUMN_PREFIX': 'truth_',
-#                 'STATISTICS': [1],  # this is sum
-#                 'OUTPUT': 'TEMPORARY_OUTPUT',
-#             },
-#         )['OUTPUT']
-#         estimated_zonal = processing.run(
-#             'native:zonalstatisticsfb',
-#             {
-#                 'INPUT': truth_zonal,
-#                 'INPUT_RASTER': estimated_volume.layer,
-#                 'RASTER_BAND': 1,
-#                 'COLUMN_PREFIX': 'estimated_',
-#                 'STATISTICS': [1],  # this is sum
-#                 'OUTPUT': 'TEMPORARY_OUTPUT',
-#             },
-#         )['OUTPUT']
-
-#         with_error = processing.run(
-#             'native:fieldcalculator',
-#             {
-#                 'INPUT': estimated_zonal,
-#                 'FIELD_NAME': 'error',
-#                 'FIELD_TYPE': 0,
-#                 'FIELD_LENGTH': 0,
-#                 'FIELD_PRECISION': 0,
-#                 'FORMULA': 'abs("truth_sum" -  "estimated_sum") / "truth_sum"',
-#                 'OUTPUT': 'TEMPORARY_OUTPUT',
-#             },
-#         )['OUTPUT']
-
-#         return with_error
-
-
-@dataclass
-class VolumeEvaluator:
-    past_dem: DEM
-    future_dem: DEM
-    future_limit: QgsGeometry
-    past_boundary: QgsVectorLayer
-    estimation_surface: QgsVectorLayer
+@dataclass(kw_only=True)
+class VolumeEvaluator(abc.ABC):
+    computation_surface: QgsVectorLayer
     gully_cover: DEM
     out_file: Path
-    validation_future_dem: DEM | None = None
-    validation_past_dem: DEM | None = None
-    validation_gully_cover: DEM | None = field(init=False, default=None)
+    project: QgsProject | None = None
 
-    def __post_init__(self) -> None:
-        if self.validation_past_dem is not None:
-            self.validation_past_dem.layer.rasterUnitsPerPixelX()
+    @abc.abstractmethod
+    def compute_delta(self) -> tuple[Raster, Raster | None]:
+        """Computes the volume difference between the estimated and the truth DEM."""
+        ...
 
-            self.validation_gully_cover = (
-                self.validation_past_dem.rank_filter(rank=50)
-                .align_to(self.validation_past_dem)
-                .with_name('validation_gully_cover')
-            )
-            # self.validation_gully_cover = (
-            #    multilevel_b_spline(
-            #        self.validation_past_dem.sample(
-            #            [self.future_limit],
-            #            output=(
-            #                self.out_dir / 'validation_past_dem_samples.shp'
-            #            ).as_posix(),
-            #        ),
-            #        cell_size,
-            #        level=14,
-            #        output=(
-            #            self.out_dir / 'validation_gully_cover.sdat'
-            #        ).as_posix(),
-            #    )
-            #    .align_to(self.validation_past_dem)
-            #    .with_name('validation_gully_cover')
-            # )
+    @abc.abstractmethod
+    def compute_volume(self) -> tuple[Raster, Raster | None]:
+        """Computes the volume of the estimated DEM."""
+        ...
 
-    def evaluate(self, project: QgsProject) -> QgsVectorLayer:
-        assert self.gully_cover is not None
-        if self.validation_gully_cover:
-            project.addMapLayer(self.validation_gully_cover.layer)
-        past = intersection(self.estimation_surface, self.past_boundary)
-        future = difference(self.estimation_surface, self.past_boundary)
-        gully_future_volume = (
-            (
-                self.gully_cover.apply_mask(future)
-                - self.future_dem.apply_mask(future)
-            )
-            .raster_volume()
-            .with_name('gully_future_volume')
-        )
-        gully_past_volume = (
-            (self.past_dem.apply_mask(past) - self.future_dem.apply_mask(past))
-            .raster_volume()
-            .with_name('gully_past_volume')
-        )
-        truth = None
-        if self.validation_past_dem is not None:
-            # assert self.validation_gully_cover is not None
-            # gully_past_volume_truth = (
-            #    (
-            #        self.validation_past_dem.apply_mask(past)
-            #        - self.future_dem.apply_mask(past)
-            #    )
-            #    .raster_volume()
-            #    .with_name('gully_past_volume_truth')
-            # )
-            # gully_future_volume_truth = (
-            #    (
-            #        self.validation_gully_cover.apply_mask(future)
-            #        - self.future_dem.apply_mask(future)
-            #    )
-            #    .raster_volume()
-            #    .with_name('gully_future_volume_truth')
-            # )
-            # truth = Raster.from_rasters(
-            #    [gully_future_volume_truth, gully_past_volume_truth]
-            # ).with_name('truth')
-            truth = (
-                (
-                    self.validation_past_dem.apply_mask(self.estimation_surface)
-                    - self.future_dem.apply_mask(self.estimation_surface)
-                )
-                .raster_volume()
-                .with_name('truth')
-            )
-        elif self.validation_future_dem is not None:
-            assert self.gully_cover is not None
-            gully_future_volume_truth = (
-                (
-                    self.gully_cover.apply_mask(future)
-                    - self.validation_future_dem.apply_mask(future)
-                )
-                .raster_volume()
-                .with_name('gully_future_volume_truth')
-            )
-            gully_past_volume_truth = (
-                (
-                    self.past_dem.apply_mask(past)
-                    - self.validation_future_dem.apply_mask(past)
-                )
-                .raster_volume()
-                .with_name('gully_past_volume')
-            )
-            truth = Raster.from_rasters(
-                [gully_future_volume_truth, gully_past_volume_truth]
-            ).with_name('truth')
-        estimation = Raster.from_rasters(
-            [gully_future_volume, gully_past_volume]
-        ).with_name('estimation')
-        project.addMapLayer(estimation.layer)
+    @abc.abstractmethod
+    def evaluate(self) -> QgsVectorLayer: ...
+
+    def zonal_statistics(
+        self,
+        input: QgsVectorLayer,
+        estimation: Raster,
+        truth: Raster | None = None,
+        prefix: str = '',
+    ) -> QgsVectorLayer:
         zonal_statistics = processing.run(
             'native:zonalstatisticsfb',
             {
-                'INPUT': self.estimation_surface,
+                'INPUT': input,
                 'INPUT_RASTER': estimation.layer,
                 'RASTER_BAND': 1,
-                'COLUMN_PREFIX': 'estimated_',
+                'COLUMN_PREFIX': f'{prefix}estimated_',
                 'STATISTICS': [1],  # this is sum
-                'OUTPUT': 'TEMPORARY_OUTPUT'
-                if truth is None
-                else self.out_file.as_posix(),
+                'OUTPUT': 'TEMPORARY_OUTPUT',
             },
         )['OUTPUT']
         if truth is not None:
-            project.addMapLayer(truth.layer)
-            zonal_statistics = processing.run(
+            if self.project is not None:
+                self.project.addMapLayer(truth.layer)
+            zonal_statistics_truth = processing.run(
                 'native:zonalstatisticsfb',
                 {
                     'INPUT': zonal_statistics,
                     'INPUT_RASTER': truth.layer,
                     'RASTER_BAND': 1,
-                    'COLUMN_PREFIX': 'truth_',
+                    'COLUMN_PREFIX': f'{prefix}truth_',
                     'STATISTICS': [1],  # this is sum
                     'OUTPUT': 'TEMPORARY_OUTPUT',
                 },
             )['OUTPUT']
 
-            with_error = processing.run(
+            zonal_statistics = processing.run(
                 'native:fieldcalculator',
                 {
-                    'INPUT': zonal_statistics,
-                    'FIELD_NAME': 'error',
+                    'INPUT': zonal_statistics_truth,
+                    'FIELD_NAME': f'{prefix}error',
                     'FIELD_TYPE': 0,
                     'FIELD_LENGTH': 0,
                     'FIELD_PRECISION': 0,
-                    'FORMULA': 'abs("truth_sum" -  "estimated_sum") / "truth_sum"',
-                    'OUTPUT': self.out_file.as_posix(),
+                    'FORMULA': f'abs("{prefix}truth_sum" -  "{prefix}estimated_sum") / "{prefix}truth_sum"',
+                    'OUTPUT': 'TEMPORARY_OUTPUT',
                 },
             )['OUTPUT']
-            return with_error
         return zonal_statistics
+
+
+@dataclass(kw_only=True)
+class ForecastVolumeEvaluator(VolumeEvaluator):
+    dem: DEM
+    estimated_dem: DEM
+    boundary: QgsVectorLayer
+    validation_dem: DEM | None = None
+    validation_gully_cover: DEM | None = None
+    boundary_intersect: QgsVectorLayer = field(init=False)
+    boundary_difference: QgsVectorLayer = field(init=False)
+
+    def __post_init__(self) -> None:
+        self.boundary_intersect = intersection(
+            self.computation_surface, self.boundary
+        )
+        self.boundary_difference = difference(
+            self.computation_surface, self.boundary
+        )
+
+    def evaluate(self) -> QgsVectorLayer:
+        estimation_delta, truth_delta = self.compute_delta()
+        delta_statistics = self.zonal_statistics(
+            self.computation_surface,
+            estimation_delta,
+            truth_delta,
+            prefix='delta_',
+        )
+        estimation_volume, truth_volume = self.compute_volume()
+        volume_statistics = self.zonal_statistics(
+            self.computation_surface,
+            estimation_volume,
+            truth_volume,
+            prefix='volume_',
+        )
+        return processing.run(
+            'native:joinattributesbylocation',
+            {
+                'INPUT': delta_statistics,
+                'PREDICATE': [2],  # equals
+                'JOIN': volume_statistics,
+                'JOIN_FIELDS': [],
+                'METHOD': 0,
+                'DISCARD_NONMATCHING': False,
+                'PREFIX': '',
+                'OUTPUT': self.out_file.as_posix(),
+            },
+        )['OUTPUT']
+
+    def compute_delta(self) -> tuple[Raster, Raster | None]:
+        estimation = (
+            (
+                self.dem.apply_mask(self.computation_surface)
+                - self.estimated_dem.apply_mask(self.computation_surface)
+            )
+            .raster_volume()
+            .with_name('estimation_delta')
+        )
+        truth = None
+        if self.validation_dem is not None:
+            truth = (
+                (
+                    self.dem.apply_mask(self.computation_surface)
+                    - self.validation_dem.apply_mask(self.computation_surface)
+                )
+                .raster_volume()
+                .with_name('truth_delta')
+            )
+        return (estimation, truth)
+
+    def compute_volume(self) -> tuple[Raster, Raster | None]:
+        estimation = (
+            (
+                self.gully_cover.apply_mask(self.computation_surface)
+                - self.estimated_dem.apply_mask(self.computation_surface)
+            )
+            .raster_volume()
+            .with_name('estimation_volume')
+        )
+        truth = None
+        if (
+            self.validation_dem is not None
+            and self.validation_gully_cover is not None
+        ):
+            truth = (
+                (
+                    self.validation_gully_cover.apply_mask(
+                        self.computation_surface
+                    )
+                    - self.validation_dem.apply_mask(self.computation_surface)
+                )
+                .raster_volume()
+                .with_name('truth_volume')
+            )
+        return (estimation, truth)
+
+
+@dataclass(kw_only=True)
+class BackcastVolumeEvaluator(VolumeEvaluator):
+    dem: DEM
+    estimated_dem: DEM
+    estimated_boundary: QgsVectorLayer
+    validation_dem: DEM | None = None
+    validation_gully_cover: DEM | None = None
+    boundary_intersect: QgsVectorLayer = field(init=False)
+    boundary_difference: QgsVectorLayer = field(init=False)
+
+    def __post_init__(self) -> None:
+        self.boundary_intersect = intersection(
+            self.computation_surface, self.estimated_boundary
+        )  # past
+        self.boundary_difference = difference(
+            self.computation_surface, self.estimated_boundary
+        )  # future
+
+    def evaluate(self) -> QgsVectorLayer:
+        estimation_delta, truth_delta = self.compute_delta()
+        delta_statistics = self.zonal_statistics(
+            self.computation_surface,
+            estimation_delta,
+            truth_delta,
+            prefix='delta_',
+        )
+        estimation_volume, truth_volume = self.compute_volume()
+        volume_statistics = self.zonal_statistics(
+            self.boundary_intersect,
+            estimation_volume,
+            truth_volume,
+            prefix='volume_',
+        )
+        return merge_vector_layers(
+            [delta_statistics, volume_statistics],
+            output=self.out_file.as_posix(),
+        )
+
+    def compute_delta(self) -> tuple[Raster, Raster | None]:
+        """Computes the eroded volume difference between the known DEM and the estimated DEM."""
+        boundary_difference_volume = (
+            self.gully_cover.apply_mask(self.boundary_difference)
+            - self.dem.apply_mask(self.boundary_difference)
+        ).raster_volume()
+        boundary_intersect_volume = (
+            self.estimated_dem.apply_mask(self.boundary_intersect)
+            - self.dem.apply_mask(self.boundary_intersect)
+        ).raster_volume()
+        estimation = Raster.from_rasters(
+            [boundary_intersect_volume, boundary_difference_volume]
+        ).with_name('estimation_delta')
+        truth = None
+        if self.validation_dem is not None:
+            truth = (
+                (
+                    self.validation_dem.apply_mask(self.computation_surface)
+                    - self.dem.apply_mask(self.computation_surface)
+                )
+                .raster_volume()
+                .with_name('truth_delta')
+            )
+        if self.project is not None:
+            self.project.addMapLayer(estimation.layer)
+            if truth is not None:
+                self.project.addMapLayer(truth.layer)
+        return (estimation, truth)
+
+    def compute_volume(self) -> tuple[Raster, Raster | None]:
+        estimation = (
+            (
+                self.gully_cover.apply_mask(self.boundary_intersect)
+                - self.estimated_dem.apply_mask(self.boundary_intersect)
+            )
+            .raster_volume()
+            .with_name('estimation_volume')
+        )
+        truth = None
+        if (
+            self.validation_dem is not None
+            and self.validation_gully_cover is not None
+        ):
+            truth = (
+                (
+                    self.validation_gully_cover.apply_mask(
+                        self.computation_surface
+                    )
+                    - self.validation_dem.apply_mask(self.computation_surface)
+                )
+                .raster_volume()
+                .with_name('truth_volume')
+            )
+        return (estimation, truth)
