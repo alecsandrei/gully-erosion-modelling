@@ -66,6 +66,14 @@ T = t.TypeVar('T', bound='Raster')
 class Raster:
     layer: QgsRasterLayer
 
+    @classmethod
+    def from_file(cls: t.Type[T], path: str | Path) -> T:
+        """Creates a Raster object from a file path."""
+        layer = QgsRasterLayer(path.as_posix(), '', 'gdal')
+        if not layer.isValid():
+            raise ValueError(f'Invalid raster layer: {path}')
+        return cls(layer)
+
     def __sub__(self: T, other: T) -> T:
         return self.difference(other)
 

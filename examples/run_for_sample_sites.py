@@ -3,26 +3,71 @@ from __future__ import annotations
 import itertools
 import json
 import os
+import sys
+import tempfile
 import typing as t
 from dataclasses import dataclass, field
 from enum import Enum, auto
+from functools import cache
 from pathlib import Path
 
 import processing
+from qgis.core import QgsVectorLayer
+
+sys.path.append(str(Path(__file__).parent.parent / 'gully_analysis'))
+import gully_analysis  # noqa
+
 
 DATA_DIR = Path(__file__).parent / 'data'
+TEMP_DIR = Path(tempfile.gettempdir())
 
 
 class Site(Enum):
-    SAVENI_AMONTE = auto()
     SOLDANESTI_AMONTE = auto()
+    SAVENI_AMONTE = auto()
     SOLDANESTI_AVAL = auto()
     SAVENI_AVAL = auto()
 
 
 class Model(Enum):
-    PAST = auto()
     FUTURE = auto()
+    PAST = auto()
+
+
+@cache
+def get_centerline(
+    site: Site,
+    polygon: Path,
+    centerline_smoothness: int = 20,
+    centerline_thin: int = 0,
+):
+    out_file = TEMP_DIR / f'{site.name.lower()}_centerline.shp'
+    with gully_analysis.utils.timeit(
+        f'Computing centerlines for {site.name} with smoothness {centerline_smoothness} and thin {centerline_thin}'
+    ):
+        layer = QgsVectorLayer(polygon.as_posix(), 'polygon', 'ogr')
+        return gully_analysis.geometry.Centerlines.compute(
+            layer,
+            smoothness=centerline_smoothness,
+            thin=centerline_thin,
+            output=out_file.as_posix(),
+        )._layer
+
+
+@cache
+def get_sink_removed(site: Site, model: Model, dem: Path):
+    out_file = (
+        TEMP_DIR
+        / f'{site.name.lower()}_{model.name.lower()}_dem_sink_removed.tif'
+    )
+    with gully_analysis.utils.timeit(
+        f'Removing sinks from DEM for {site.name}'
+    ):
+        return (
+            gully_analysis.raster.DEM.from_file(dem)
+            .remove_sinks(output=out_file.as_posix())
+            .layer
+        )
 
 
 def get_directory_files(site: Site) -> dict[str, Path]:
@@ -48,23 +93,28 @@ def get_advanced_parameters():
 
 
 def advanced_parameter_combinations():
-    changepoint_penalty = (5, 10, 15, 20)
-    sample_aggregate = ('maximum', 'minimum', 'mean')
+    # changepoint_penalty = (5, 10, 15, 20)
+    # changepoint_penalty = (30,)
+    changepoint_penalty = range(5, 51, 5)
+    # sample_aggregate = ('maximum', 'minimum', 'mean')
+    sample_aggregate = ('maximum',)
     return itertools.product(changepoint_penalty, sample_aggregate)
 
 
 def get_past_model_parameters(
-    files: dict[str, str], output_dir: Path
+    files: dict[str, str], output_dir: Path, site: Site, model: Model
 ) -> dict[str, t.Any]:
     return {
         'GULLY_BOUNDARY': files['future'],
-        'GULLY_ELEVATION': files['future_dem'],
-        'GULLY_ELEVATION_SINK_REMOVED': False,
+        'GULLY_ELEVATION': get_sink_removed(
+            site=site, dem=Path(files['future_dem']), model=model
+        ),
+        'GULLY_ELEVATION_SINK_REMOVED': True,
         'GULLY_PAST_ELEVATION': files['past_dem'],
         'GULLY_PAST_BOUNDARY': files['past'],
         'ESTIMATION_SURFACE': files['estimation_surface'],
-        'CENTERLINES': None,
-        'DEBUG_MODE': True,
+        'CENTERLINES': get_centerline(site=site, polygon=Path(files['future'])),
+        'DEBUG_MODE': False,
         'ESTIMATED_DEM': (output_dir / 'estimated_dem_past.tif').as_posix(),
         'ESTIMATION_SURFACE_OUTPUT': (
             output_dir / 'estimation_surface_output_past.fgb'
@@ -74,17 +124,19 @@ def get_past_model_parameters(
 
 
 def get_future_model_parameters(
-    files: dict[str, str], output_dir: Path
+    files: dict[str, str], output_dir: Path, site: Site, model: Model
 ) -> dict[str, t.Any]:
     return {
         'GULLY_BOUNDARY': files['past'],
-        'GULLY_ELEVATION': files['past_dem'],
-        'GULLY_ELEVATION_SINK_REMOVED': False,
+        'GULLY_ELEVATION': get_sink_removed(
+            site=site, dem=Path(files['past_dem']), model=model
+        ),
+        'GULLY_ELEVATION_SINK_REMOVED': True,
         'GULLY_FUTURE_ELEVATION': files['future_dem'],
         'GULLY_FUTURE_BOUNDARY': files['future'],
         'ESTIMATION_SURFACE': files['estimation_surface'],
-        'CENTERLINES': None,
-        'DEBUG_MODE': True,
+        'CENTERLINES': get_centerline(site=site, polygon=Path(files['future'])),
+        'DEBUG_MODE': False,
         'ESTIMATED_DEM': (output_dir / 'estimated_dem_future.tif').as_posix(),
         'ESTIMATION_SURFACE_OUTPUT': (
             output_dir / 'estimation_surface_output_future.fgb'
@@ -101,9 +153,13 @@ def get_model_parameters(
     out_dir = trial_dir / site.name / model.name
     os.makedirs(out_dir, exist_ok=True)
     if model is Model.PAST:
-        return get_past_model_parameters(files_as_str, out_dir)
+        return get_past_model_parameters(
+            files_as_str, out_dir, site, model=model
+        )
     elif model is Model.FUTURE:
-        return get_future_model_parameters(files_as_str, out_dir)
+        return get_future_model_parameters(
+            files_as_str, out_dir, site, model=model
+        )
 
 
 @dataclass
@@ -150,8 +206,8 @@ class Trial:
                 f'gullyanalysis:estimate{model.name.lower()}',
                 parameters,
             )
-        except Exception:
-            print(f'Failed {self!r} {site!r} {model!r}')
+        except Exception as e:
+            print(f'Failed {self!r} {site!r} {model!r}: {e}')
 
 
 def make_serializable(obj: t.Any):

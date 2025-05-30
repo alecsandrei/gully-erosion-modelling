@@ -121,8 +121,8 @@ class Centerlines(UserList[QgsGeometry]):
     def compute(
         cls,
         polygon_layer: QgsVectorLayer,
-        context: QgsProcessingContext,
-        feedback: QgsProcessingFeedback,
+        context: QgsProcessingContext | None = None,
+        feedback: QgsProcessingFeedback | None = None,
         output: str = 'TEMPORARY_OUTPUT',
         smoothness: float = 5,
         thin: float | t.Literal['adaptive'] = 1,

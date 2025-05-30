@@ -510,9 +510,6 @@ class EstimateErosionFuture(QgsProcessingAlgorithm):
                 (out_dir / Layers.FLOW_PATH_PROFILES.name).with_suffix('.fgb'),
             )
             project.addMapLayer(profiles_layer)
-        # assert len(profile_pour_points_dedup) == len(
-        #     profiles
-        # ), 'Pour point count does not match flow path profile count.'
         mapper = ProfileCenterlineMapper(
             profile_pour_points_dedup, profiles, shortest_paths
         )
@@ -548,9 +545,9 @@ class EstimateErosionFuture(QgsProcessingAlgorithm):
         aggregated = aggregate_samples(
             samples.estimated, advanced_params.sample_aggregation
         )
+        aggregated.setCrs(crs)
+        aggregated.setName(Layers.SAMPLES.name)
         if debug_mode:
-            aggregated.setCrs(crs)
-            aggregated.setName(Layers.SAMPLES.name)
             _, aggregated = export(
                 aggregated,
                 (out_dir / Layers.SAMPLES.name).with_suffix('.shp'),
@@ -570,24 +567,24 @@ class EstimateErosionFuture(QgsProcessingAlgorithm):
             .align_to(gully_elevation)
             .gaussian_filter(output=estimated_dem_output)
         )
-        if debug_mode:
-            estimated_dem.layer.setCrs(crs)
-            estimated_dem.layer.setName(Layers.ESTIMATED_DEM.name)
-        gully_cover = multilevel_b_spline(
-            samples.boundary,
-            cell_size,
-            level=advanced_params.multilevel_b_spline_level,
-            context=context,
-            feedback=feedback if debug_mode else None,
-        ).align_to(
-            gully_elevation, output=(out_dir / 'gully_cover.tif').as_posix()
+        gully_cover = (
+            multilevel_b_spline(
+                samples.boundary,
+                cell_size,
+                level=advanced_params.multilevel_b_spline_level,
+                context=context,
+                feedback=feedback if debug_mode else None,
+            )
+            .align_to(
+                gully_elevation, output=(out_dir / 'gully_cover.tif').as_posix()
+            )
+            .with_name(Layers.GULLY_COVER.name)
         )
+        gully_cover.layer.setCrs(crs)
         if debug_mode:
-            gully_cover.layer.setCrs(crs)
-            gully_cover.layer.setName(Layers.GULLY_COVER.name)
             project.addMapLayer(gully_cover.layer)
         validation_gully_cover = None
-        if debug_mode and gully_future_elevation is not None:
+        if gully_future_elevation is not None:
             gully_cover_samples = gully_future_elevation.sample(
                 [gully_future_limit], feedback=feedback, context=context
             )
@@ -1090,7 +1087,7 @@ class EstimateErosionPast(QgsProcessingAlgorithm):
         estimated_dem.layer.setName(Layers.ESTIMATED_DEM.name)
 
         validation_gully_cover = None
-        if debug_mode and gully_past_elevation is not None:
+        if gully_past_elevation is not None:
             gully_cover_samples = gully_past_elevation.sample(
                 [gully_past_limit], feedback=feedback, context=context
             )
