@@ -321,15 +321,18 @@ class EstimateErosionFuture(QgsProcessingAlgorithm):
                 parameters, self.GULLY_ELEVATION, context
             )
         )  # type: ignore
-
-        gully_future_elevation = DEM(
-            self.parameterAsRasterLayer(
-                parameters, self.GULLY_FUTURE_ELEVATION, context
-            )
-        ).align_to(gully_elevation)
         gully_elevation_is_sink_removed = self.parameterAsBool(
             parameters, self.GULLY_ELEVATION_SINK_REMOVED, context
         )
+
+        gully_future_elevation_input = self.parameterAsRasterLayer(
+            parameters, self.GULLY_FUTURE_ELEVATION, context
+        )
+        gully_future_elevation: DEM | None = None
+        if gully_future_elevation_input is not None:
+            gully_future_elevation = DEM(gully_future_elevation_input).align_to(
+                gully_elevation
+            )
         cell_size = gully_elevation.layer.rasterUnitsPerPixelX()
         gully_future_boundary = delete_holes(
             dissolve_layer(
@@ -339,6 +342,9 @@ class EstimateErosionFuture(QgsProcessingAlgorithm):
             ),
             0.001,
         )
+        gully_elevation.layer.setCrs(crs)
+        if gully_future_elevation is not None:
+            gully_future_elevation.layer.setCrs(crs)
         centerlines = self.parameterAsVectorLayer(
             parameters, self.CENTERLINES, context
         )
@@ -554,8 +560,6 @@ class EstimateErosionFuture(QgsProcessingAlgorithm):
                 driver_name='ESRI Shapefile',
             )
             project.addMapLayer(aggregated)
-        gully_elevation.layer.setCrs(crs)
-        gully_future_elevation.layer.setCrs(crs)
         estimated_dem = (
             multilevel_b_spline(
                 aggregated,

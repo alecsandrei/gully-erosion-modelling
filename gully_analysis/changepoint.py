@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import collections.abc as c
-import reprlib
 import typing as t
 from dataclasses import dataclass
 from pathlib import Path
@@ -190,7 +189,7 @@ def estimate_gully_head(
     )
     if not changepoints:
         return None
-    (
+    path_to_plots = (
         Path(__file__).parent.parent
         / 'data'
         / 'test_data'
@@ -256,29 +255,12 @@ def get_features_with_estimated_z(
     for feature in input_layer.getFeatures():
         attrs = feature.attributes()
         line_id = int(attrs[idx_line_id])
-
-        if line_id not in results:
-            print(
-                f'Line ID {line_id} not found in {reprlib.repr(results)}, skipping feature.'
-            )
-            raise Exception
-            continue
-
         i = line_counters[line_id]
         z_array = results[line_id]
-
-        if i >= len(z_array):
-            print(
-                f'Index {i} out of bounds for line ID {line_id} with {len(z_array)} Z values, skipping feature.'
-            )
-            continue
-
-        # Create updated feature
         new_feat = QgsFeature(feature)
         new_attrs = list(attrs)
         new_attrs[idx_z] = float(z_array[i])
         new_feat.setAttributes(new_attrs)
-
         updated_features.append(new_feat)
         line_counters[line_id] += 1
 
@@ -306,7 +288,6 @@ def estimate_gully_heads(
             sampled_profiles_gully_cover
         )
 
-    # def handle_line_id(line_id: int) -> None | list[QgsFeature]:
     def handle_line_id(line_id: int) -> np.ndarray | None:
         estimated_gully_head = estimate_gully_head(
             sampled_profiles_ndarray[line_id],
@@ -340,7 +321,7 @@ def estimate_gully_heads(
 class Samples:
     profiles: QgsVectorLayer
     profiles_to_estimate: QgsVectorLayer
-    boundary: QgsVectorLayer
+    boundary: QgsVectorLayer | None
     estimated: QgsVectorLayer  # estimated profiles + boundary
 
 
