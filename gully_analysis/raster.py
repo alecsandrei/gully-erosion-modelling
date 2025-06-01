@@ -492,6 +492,50 @@ class DEM(Raster):
 
     def flow_path_profiles_from_points(
         self,
+        source_points: QgsVectorLayer,
+        tolerance: float,
+        context: QgsProcessingContext | None = None,
+        feedback: QgsProcessingFeedback | None = None,
+    ):
+        profiles = processing.run(
+            'grass:r.drain',
+            {
+                'input': self.layer,
+                'direction': None,
+                'start_coordinates': None,
+                'start_points': source_points,
+                '-c': False,
+                '-a': False,
+                '-n': False,
+                '-d': False,
+                'output': 'TEMPORARY_OUTPUT',
+                'drain': 'TEMPORARY_OUTPUT',
+                'GRASS_REGION_PARAMETER': None,
+                'GRASS_REGION_CELLSIZE_PARAMETER': 0,
+                'GRASS_RASTER_FORMAT_OPT': '',
+                'GRASS_RASTER_FORMAT_META': '',
+                'GRASS_SNAP_TOLERANCE_PARAMETER': -1,
+                'GRASS_MIN_AREA_PARAMETER': 0.0001,
+                'GRASS_OUTPUT_TYPE_PARAMETER': 2,
+                'GRASS_VECTOR_DSCO': '',
+                'GRASS_VECTOR_LCO': '',
+                'GRASS_VECTOR_EXPORT_NOCAT': True,
+            },
+        )['drain']
+        snapped_profiles = processing.run(
+            'native:snapgeometries',
+            {
+                'INPUT': profiles,
+                'REFERENCE_LAYER': source_points,
+                'TOLERANCE': tolerance,
+                'BEHAVIOR': 6,
+                'OUTPUT': 'TEMPORARY_OUTPUT',
+            },
+        )['OUTPUT']
+        return list(get_geometries_from_layer(snapped_profiles))
+
+    def flow_path_profiles_from_points_sagagis(
+        self,
         source_points: c.Sequence[QgsGeometry],
         tolerance: float = 0.5,
         context: QgsProcessingContext | None = None,

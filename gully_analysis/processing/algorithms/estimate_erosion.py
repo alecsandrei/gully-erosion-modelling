@@ -483,12 +483,12 @@ class EstimateErosionFuture(QgsProcessingAlgorithm):
             QgsGeometry.fromPointXY(path.end) for path in shortest_paths
         ]
         profile_source_points_dedup = remove_duplicated(profile_source_points)
+        profile_source_points_layer = geometries_to_layer(
+            profile_source_points_dedup,
+            Layers.FLOW_PATH_PROFILE_SOURCE_POINTS.name,
+        )
+        profile_source_points_layer.setCrs(crs)
         if debug_mode:
-            profile_source_points_layer = geometries_to_layer(
-                profile_source_points_dedup,
-                Layers.FLOW_PATH_PROFILE_SOURCE_POINTS.name,
-            )
-            profile_source_points_layer.setCrs(crs)
             _, profile_source_points_layer = export(
                 profile_source_points_layer,
                 (
@@ -497,7 +497,7 @@ class EstimateErosionFuture(QgsProcessingAlgorithm):
             )
             project.addMapLayer(profile_source_points_layer)
         profiles = sink_removed.flow_path_profiles_from_points(
-            profile_source_points_dedup,
+            profile_source_points_layer,
             tolerance=cell_size,
             context=context,
             feedback=feedback if debug_mode else None,
@@ -938,11 +938,11 @@ class EstimateErosionPast(QgsProcessingAlgorithm):
             first, _ = Endpoints.from_linestring(centerline).as_qgis_geometry()
             if first.intersects(limit_difference):
                 source_points.append(first)
+        source_points_layer = geometries_to_layer(
+            source_points, Layers.SHORTEST_PATHS_START_POINTS.name
+        )
+        source_points_layer.setCrs(crs)
         if debug_mode:
-            source_points_layer = geometries_to_layer(
-                source_points, Layers.SHORTEST_PATHS_START_POINTS.name
-            )
-            source_points_layer.setCrs(crs)
             _, source_points_layer = export(
                 source_points_layer,
                 (out_dir / Layers.SHORTEST_PATHS_START_POINTS.name).with_suffix(
@@ -966,7 +966,7 @@ class EstimateErosionPast(QgsProcessingAlgorithm):
                 sink_removed = gully_elevation
         with timeit('Flow path profiles'):
             profiles = sink_removed.flow_path_profiles_from_points(
-                source_points,
+                source_points_layer,
                 tolerance=cell_size,
                 context=context,
                 feedback=feedback if debug_mode else None,
