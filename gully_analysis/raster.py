@@ -497,9 +497,9 @@ class DEM(Raster):
         context: QgsProcessingContext | None = None,
         feedback: QgsProcessingFeedback | None = None,
     ) -> list[QgsGeometry]:
-        """Get flow path profiles from pour points."""
+        """Get flow path profiles from source points."""
         source_points_as_layer = geometries_to_layer(
-            source_points, 'pour_points'
+            source_points, 'flow_path_profile_source_points'
         )
         source_points_as_layer.setCrs(self.layer.crs())
         source_points_layer = geometries_to_layer(source_points)
@@ -669,8 +669,6 @@ class VolumeEvaluator(abc.ABC):
             },
         )['OUTPUT']
         if truth is not None:
-            if self.project is not None:
-                self.project.addMapLayer(truth.layer)
             zonal_statistics_truth = processing.run(
                 'native:zonalstatisticsfb',
                 {
@@ -843,7 +841,7 @@ class BackcastVolumeEvaluator(VolumeEvaluator):
         ).raster_volume()
         estimation = Raster.from_rasters(
             [boundary_intersect_volume, boundary_difference_volume]
-        ).with_name('estimation_delta')
+        ).with_name('estimated volume')
         truth = None
         if self.validation_dem is not None:
             truth = (
@@ -852,7 +850,7 @@ class BackcastVolumeEvaluator(VolumeEvaluator):
                     - self.dem.apply_mask(self.computation_surface)
                 )
                 .raster_volume()
-                .with_name('truth_delta')
+                .with_name('ground truth volume')
             )
         if self.project is not None:
             self.project.addMapLayer(estimation.layer)

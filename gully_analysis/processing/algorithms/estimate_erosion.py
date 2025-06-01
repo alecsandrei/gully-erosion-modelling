@@ -59,7 +59,7 @@ class Layers(Enum):
     DEM_NO_SINKS = auto()
     SHORTEST_PATHS = auto()
     POINTS_INTERSECTING_GULLY = auto()
-    FLOW_PATH_PROFILE_POUR_POINTS = auto()
+    FLOW_PATH_PROFILE_SOURCE_POINTS = auto()
     MAPPED_PROFILES = auto()
     SAMPLES = auto()
     AGGREGATED_SAMPLES = auto()
@@ -290,8 +290,6 @@ class EstimateErosionFuture(QgsProcessingAlgorithm):
         context: QgsProcessingContext,
         feedback: QgsProcessingFeedback | None = None,
     ) -> dict[str, t.Any]:
-        # TODO: prevent the code from breaking if feedback is None
-        assert feedback is not None
         estimated_dem_output = self.parameterAsOutputLayer(
             parameters, self.ESTIMATED_DEM, context
         )
@@ -385,7 +383,7 @@ class EstimateErosionFuture(QgsProcessingAlgorithm):
             centerlines = Centerlines.compute(
                 gully_future_boundary,
                 context,
-                feedback,
+                feedback if debug_mode else None,
                 temp_path.as_posix(),
                 smoothness=advanced_params.centerline_smoothness,
                 thin=advanced_params.centerline_thin,
@@ -405,26 +403,26 @@ class EstimateErosionFuture(QgsProcessingAlgorithm):
         else:
             centerlines = Centerlines.from_layer(centerlines)
 
-        pour_points = []
+        source_points = []
         for centerline in centerlines.intersects(difference):
             first, _ = Endpoints.from_linestring(centerline).as_qgis_geometry()
             if (
                 first.intersects(limit_difference)
                 and first.distance(gully_limit) > cell_size
             ):
-                pour_points.append(first)
+                source_points.append(first)
         if debug_mode:
-            pour_points_layer = geometries_to_layer(
-                pour_points, Layers.SHORTEST_PATHS_START_POINTS.name
+            source_points_layer = geometries_to_layer(
+                source_points, Layers.SHORTEST_PATHS_START_POINTS.name
             )
-            pour_points_layer.setCrs(crs)
-            _, pour_points_layer = export(
-                pour_points_layer,
+            source_points_layer.setCrs(crs)
+            _, source_points_layer = export(
+                source_points_layer,
                 (out_dir / Layers.SHORTEST_PATHS_START_POINTS.name).with_suffix(
                     '.fgb'
                 ),
             )
-            project.addMapLayer(pour_points_layer)
+            project.addMapLayer(source_points_layer)
 
         centerlines_valid = [
             centerline
@@ -453,7 +451,7 @@ class EstimateErosionFuture(QgsProcessingAlgorithm):
             project.addMapLayer(points_intersecting_gully_layer)
             feedback.pushDebugInfo('Building graph to merge the centerlines.')
         shortest_paths = get_shortest_paths(
-            pour_points,
+            source_points,
             centerlines._layer,
             points_intersecting_gully_boundary,
             feedback=feedback if debug_mode else None,
@@ -481,25 +479,25 @@ class EstimateErosionFuture(QgsProcessingAlgorithm):
         else:
             sink_removed = gully_elevation
         sink_removed.layer.setCrs(crs)
-        profile_pour_points = [
+        profile_source_points = [
             QgsGeometry.fromPointXY(path.end) for path in shortest_paths
         ]
-        profile_pour_points_dedup = remove_duplicated(profile_pour_points)
+        profile_source_points_dedup = remove_duplicated(profile_source_points)
         if debug_mode:
-            profile_pour_points_layer = geometries_to_layer(
-                profile_pour_points_dedup,
-                Layers.FLOW_PATH_PROFILE_POUR_POINTS.name,
+            profile_source_points_layer = geometries_to_layer(
+                profile_source_points_dedup,
+                Layers.FLOW_PATH_PROFILE_SOURCE_POINTS.name,
             )
-            profile_pour_points_layer.setCrs(crs)
-            _, profile_pour_points_layer = export(
-                profile_pour_points_layer,
+            profile_source_points_layer.setCrs(crs)
+            _, profile_source_points_layer = export(
+                profile_source_points_layer,
                 (
-                    out_dir / Layers.FLOW_PATH_PROFILE_POUR_POINTS.name
+                    out_dir / Layers.FLOW_PATH_PROFILE_SOURCE_POINTS.name
                 ).with_suffix('.fgb'),
             )
-            project.addMapLayer(profile_pour_points_layer)
+            project.addMapLayer(profile_source_points_layer)
         profiles = sink_removed.flow_path_profiles_from_points(
-            profile_pour_points_dedup,
+            profile_source_points_dedup,
             tolerance=cell_size,
             context=context,
             feedback=feedback if debug_mode else None,
@@ -517,7 +515,7 @@ class EstimateErosionFuture(QgsProcessingAlgorithm):
             )
             project.addMapLayer(profiles_layer)
         mapper = ProfileCenterlineMapper(
-            profile_pour_points_dedup, profiles, shortest_paths
+            profile_source_points_dedup, profiles, shortest_paths
         )
         mapped_profiles = mapper.get_mapped_profiles()
         if debug_mode:
@@ -916,7 +914,7 @@ class EstimateErosionPast(QgsProcessingAlgorithm):
             centerlines = Centerlines.compute(
                 gully_boundary,
                 context,
-                feedback,
+                feedback if debug_mode else None,
                 temp_path.as_posix(),
                 smoothness=advanced_params.centerline_smoothness,
                 thin=advanced_params.centerline_thin,
@@ -935,23 +933,23 @@ class EstimateErosionPast(QgsProcessingAlgorithm):
         else:
             centerlines = Centerlines.from_layer(centerlines)
 
-        pour_points = []
+        source_points = []
         for centerline in centerlines.intersects(limit_difference):
             first, _ = Endpoints.from_linestring(centerline).as_qgis_geometry()
             if first.intersects(limit_difference):
-                pour_points.append(first)
+                source_points.append(first)
         if debug_mode:
-            pour_points_layer = geometries_to_layer(
-                pour_points, Layers.SHORTEST_PATHS_START_POINTS.name
+            source_points_layer = geometries_to_layer(
+                source_points, Layers.SHORTEST_PATHS_START_POINTS.name
             )
-            pour_points_layer.setCrs(crs)
-            _, pour_points_layer = export(
-                pour_points_layer,
+            source_points_layer.setCrs(crs)
+            _, source_points_layer = export(
+                source_points_layer,
                 (out_dir / Layers.SHORTEST_PATHS_START_POINTS.name).with_suffix(
                     '.fgb'
                 ),
             )
-            project.addMapLayer(pour_points_layer)
+            project.addMapLayer(source_points_layer)
 
         with timeit('Sink removal'):
             if not gully_elevation_is_sink_removed:
@@ -968,7 +966,7 @@ class EstimateErosionPast(QgsProcessingAlgorithm):
                 sink_removed = gully_elevation
         with timeit('Flow path profiles'):
             profiles = sink_removed.flow_path_profiles_from_points(
-                pour_points,
+                source_points,
                 tolerance=cell_size,
                 context=context,
                 feedback=feedback if debug_mode else None,

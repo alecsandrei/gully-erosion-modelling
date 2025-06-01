@@ -25,7 +25,7 @@ class MappedProfile(t.TypedDict):
 
 @dataclass
 class ProfileCenterlineMapper:
-    profile_pour_points: c.Sequence[QgsGeometry]
+    profile_source_points: c.Sequence[QgsGeometry]
     profiles: c.Sequence[QgsGeometry]
     shortest_paths: c.Sequence[ShortestPath]
 
@@ -64,7 +64,7 @@ class ProfileCenterlineMapper:
     def get_mapped_profiles(self) -> list[MappedProfile]:
         """Maps the flow path profiles with the shortest paths (centerlines).
 
-        This is done using the flow path profile pour points, which coincide
+        This is done using the flow path profile source points, which coincide
         with the destination point (the second value in the tuple) of the
         ShortestPath. Returns N lines merged from the shortest path and the flow
         path profile which continues "downstream", where N is the length of
@@ -74,9 +74,9 @@ class ProfileCenterlineMapper:
         def get_matched_flow_path_profile(
             point: QgsPointXY,
         ) -> tuple[int, QgsGeometry] | None:
-            pour_point = None
-            for i, pour_point in enumerate(self.profile_pour_points):
-                if pour_point.asPoint() == point:
+            source_point = None
+            for i, source_point in enumerate(self.profile_source_points):
+                if source_point.asPoint() == point:
                     for j, profile in enumerate(self.profiles):
                         if Endpoints.from_linestring(profile).first == point:
                             return (j, profile)
