@@ -93,10 +93,7 @@ def get_advanced_parameters():
 
 
 def advanced_parameter_combinations():
-    # changepoint_penalty = (5, 10, 15, 20)
-    # changepoint_penalty = (30,)
     changepoint_penalty = range(5, 51, 5)
-    # sample_aggregate = ('maximum', 'minimum', 'mean')
     sample_aggregate = ('maximum',)
     return itertools.product(changepoint_penalty, sample_aggregate)
 
@@ -111,7 +108,7 @@ def get_past_model_parameters(
         ),
         'GULLY_ELEVATION_SINK_REMOVED': True,
         'GULLY_PAST_ELEVATION': files['past_dem'],
-        'GULLY_PAST_BOUNDARY': files['past'],
+        'GULLY_PAST_BOUNDARY': files['past_google_earth'],
         'ESTIMATION_SURFACE': files['estimation_surface'],
         'CENTERLINES': get_centerline(site=site, polygon=Path(files['future'])),
         'DEBUG_MODE': False,
@@ -227,8 +224,10 @@ def is_serializable(obj: t.Any):
 
 
 def main():
-    trials_dir = Path(__file__).parent.parent / 'trials'
-    trials_dir.mkdir(exist_ok=True)
+    trials_dir = Path(
+        os.getenv('TRIALS_DIR', default=Path(__file__).parent.parent / 'trials')
+    )
+    os.makedirs(trials_dir, exist_ok=True)
     for (
         changepoint_penalty,
         aggregate_method,
