@@ -85,7 +85,7 @@ def debug_estimation(
     plt.close()
 
 
-def estimate_gully_simpler(
+def estimate_gully(
     profile: np.ndarray,
     profile_to_estimate: np.ndarray,
     changepoints: c.Sequence[int],
@@ -140,14 +140,6 @@ def estimate_gully_simpler(
     return profile_to_estimate
 
 
-# def filter_on_id_line(
-#    line_id: int, samples: QgsVectorLayer
-# ) -> list[QgsFeature]:
-#    col = 'ID_LINE'
-#    iterator = samples.getFeatures(expression=f'"{col}" = {line_id}')
-#    if iterator.compileFailed():
-#        raise Exception(f'Failed to filter the samples on {col}.')
-#    return list(iterator)  # type: ignore
 def filter_on_id_line(
     line_id: int, samples: QgsVectorLayer
 ) -> list[QgsFeature]:
@@ -189,14 +181,14 @@ def estimate_gully_head(
     )
     if not changepoints:
         return None
-    path_to_plots = (
+    _path_to_plots = (
         Path(__file__).parent.parent
         / 'data'
         / 'test_data'
         / 'plots'
         / f'{line_id}.png'
     )
-    estimated = estimate_gully_simpler(
+    estimated = estimate_gully(
         profile=profile_samples,
         profile_to_estimate=profile_to_estimate_samples,
         changepoints=changepoints,
@@ -372,7 +364,8 @@ def get_estimated_samples(
     layer.updateFields()
     with edit(layer):
         layer.addFeatures(estimated)
-        layer.addFeatures(list(sampled_boundary.getFeatures()))  # type: ignore
+        if sampled_boundary is not None:
+            layer.addFeatures(list(sampled_boundary.getFeatures()))
         layer.setCrs(crs)
 
     return Samples(

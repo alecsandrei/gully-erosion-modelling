@@ -46,6 +46,7 @@ from ...utils import (
     export,
     geometries_to_layer,
     get_first_geometry,
+    merge_vector_layers,
     timeit,
 )
 
@@ -61,6 +62,7 @@ class Layers(Enum):
     POINTS_INTERSECTING_GULLY = auto()
     FLOW_PATH_PROFILE_SOURCE_POINTS = auto()
     MAPPED_PROFILES = auto()
+    MAPPED_PROFILES_SAMPLES = auto()
     SAMPLES = auto()
     AGGREGATED_SAMPLES = auto()
     ESTIMATED_DEM = auto()
@@ -206,7 +208,7 @@ class EstimateErosionFuture(QgsProcessingAlgorithm):
         centerline_smoothness_param = QgsProcessingParameterNumber(
             self.CENTERLINE_SMOOTHNESS,
             self.tr('The r.voronoi.skeleton smoothness parameter'),
-            defaultValue=20,
+            defaultValue=25,
         )
         centerline_smoothness_param.setFlags(
             centerline_smoothness_param.flags()
@@ -254,7 +256,7 @@ class EstimateErosionFuture(QgsProcessingAlgorithm):
         self.addParameter(estimated_dem)
         estimation_surface_output = QgsProcessingParameterVectorDestination(
             self.ESTIMATION_SURFACE_OUTPUT,
-            self.tr('The computed estimated volume in the estimation surfaces'),
+            self.tr('Estimated volume'),
         )
         self.addParameter(estimation_surface_output)
 
@@ -380,15 +382,16 @@ class EstimateErosionFuture(QgsProcessingAlgorithm):
                     name='centerlines'
                 ).generateTemporaryDestination(context)
             ).with_suffix('.fgb')
-            centerlines = Centerlines.compute(
-                gully_future_boundary,
-                context,
-                feedback if debug_mode else None,
-                temp_path.as_posix(),
-                smoothness=advanced_params.centerline_smoothness,
-                thin=advanced_params.centerline_thin,
-                # thin='adaptive',
-            )
+            with timeit('Centerlines computation'):
+                centerlines = Centerlines.compute(
+                    gully_future_boundary,
+                    context,
+                    feedback if debug_mode else None,
+                    temp_path.as_posix(),
+                    smoothness=advanced_params.centerline_smoothness,
+                    thin=advanced_params.centerline_thin,
+                    # thin='adaptive',
+                )
             centerlines = Centerlines.from_layer(
                 export(
                     centerlines._layer, out_file=out_dir / 'centerlines.fgb'
@@ -411,6 +414,21 @@ class EstimateErosionFuture(QgsProcessingAlgorithm):
                 and first.distance(gully_limit) > cell_size
             ):
                 source_points.append(first)
+        # gully_future_limit_layer = geometries_to_layer(
+        #    [gully_future_limit],
+        # )
+        # gully_future_limit_layer.setCrs(crs)
+        # source_points = list(
+        #    get_geometries_from_layer(
+        #        intersection(
+        #            line_intersections(
+        #                centerlines._layer,
+        #                gully_future_limit_layer,
+        #            ),
+        #            difference_layer,
+        #        )
+        #    )
+        # )
         if debug_mode:
             source_points_layer = geometries_to_layer(
                 source_points, Layers.SHORTEST_PATHS_START_POINTS.name
@@ -450,12 +468,13 @@ class EstimateErosionFuture(QgsProcessingAlgorithm):
             )
             project.addMapLayer(points_intersecting_gully_layer)
             feedback.pushDebugInfo('Building graph to merge the centerlines.')
-        shortest_paths = get_shortest_paths(
-            source_points,
-            centerlines._layer,
-            points_intersecting_gully_boundary,
-            feedback=feedback if debug_mode else None,
-        )
+        with timeit('Computing shortest paths'):
+            shortest_paths = get_shortest_paths(
+                source_points,
+                centerlines._layer,
+                points_intersecting_gully_boundary,
+                feedback=feedback if debug_mode else None,
+            )
         if debug_mode:
             shortest_paths_as_layer = geometries_to_layer(
                 [line.path for line in shortest_paths],
@@ -468,11 +487,12 @@ class EstimateErosionFuture(QgsProcessingAlgorithm):
             )
             project.addMapLayer(shortest_paths_as_layer)
         if not gully_elevation_is_sink_removed:
-            sink_removed = gully_elevation.remove_sinks(
-                context,
-                feedback if debug_mode else None,
-                (out_dir / 'sink_removed.tif').as_posix(),
-            )
+            with timeit('Sink removal'):
+                sink_removed = gully_elevation.remove_sinks(
+                    context,
+                    feedback if debug_mode else None,
+                    (out_dir / 'sink_removed.tif').as_posix(),
+                )
             if debug_mode:
                 sink_removed.layer.setName(Layers.DEM_NO_SINKS.name)
                 project.addMapLayer(sink_removed.layer)
@@ -496,12 +516,13 @@ class EstimateErosionFuture(QgsProcessingAlgorithm):
                 ).with_suffix('.fgb'),
             )
             project.addMapLayer(profile_source_points_layer)
-        profiles = sink_removed.flow_path_profiles_from_points(
-            profile_source_points_layer,
-            tolerance=cell_size,
-            context=context,
-            feedback=feedback if debug_mode else None,
-        )
+        with timeit('Flow path profiles'):
+            profiles = sink_removed.flow_path_profiles_from_points(
+                profile_source_points_layer,
+                tolerance=cell_size,
+                context=context,
+                feedback=feedback if debug_mode else None,
+            )
         for profile in profiles:
             profile.convertToMultiType()
         if debug_mode:
@@ -517,7 +538,8 @@ class EstimateErosionFuture(QgsProcessingAlgorithm):
         mapper = ProfileCenterlineMapper(
             profile_source_points_dedup, profiles, shortest_paths
         )
-        mapped_profiles = mapper.get_mapped_profiles()
+        with timeit('Mapping profiles to centerlines'):
+            mapped_profiles = mapper.get_mapped_profiles()
         if debug_mode:
             mapped_profiles_layer = geometries_to_layer(
                 [profile['mapped'] for profile in mapped_profiles],
@@ -530,25 +552,30 @@ class EstimateErosionFuture(QgsProcessingAlgorithm):
             )
             project.addMapLayer(mapped_profiles_layer)
 
-        samples = get_estimated_samples(
-            dem=sink_removed,
-            # dem_truth=gully_future_elevation.remove_sinks(),
-            profiles=[
-                profiles[profile['profile_index']]
-                for profile in mapped_profiles
-            ],
-            profiles_to_estimate=[
-                profile['mapped'] for profile in mapped_profiles
-            ],
-            crs=crs,
-            boundary=gully_future_limit,
-            context=context,
-            feedback=feedback if debug_mode else None,
-            changepoint_penalty=advanced_params.changepoint_penalty,
-        )
-        aggregated = aggregate_samples(
-            samples.estimated, advanced_params.sample_aggregation
-        )
+        with timeit('Creating samples for interpolation'):
+            samples = get_estimated_samples(
+                dem=sink_removed,
+                # dem_truth=gully_future_elevation.remove_sinks(),
+                profiles=[
+                    profiles[profile['profile_index']]
+                    for profile in mapped_profiles
+                ],
+                profiles_to_estimate=[
+                    profile['mapped'] for profile in mapped_profiles
+                ],
+                crs=crs,
+                boundary=gully_future_limit,
+                context=context,
+                feedback=feedback if debug_mode else None,
+                changepoint_penalty=advanced_params.changepoint_penalty,
+            )
+        if debug_mode:
+            samples.estimated.setName(Layers.MAPPED_PROFILES_SAMPLES.name)
+            project.addMapLayer(samples.profiles)
+        with timeit('Aggregating samples'):
+            aggregated = aggregate_samples(
+                samples.estimated, advanced_params.sample_aggregation
+            )
         aggregated.setCrs(crs)
         aggregated.setName(Layers.SAMPLES.name)
         if debug_mode:
@@ -558,60 +585,65 @@ class EstimateErosionFuture(QgsProcessingAlgorithm):
                 driver_name='ESRI Shapefile',
             )
             project.addMapLayer(aggregated)
-        estimated_dem = (
-            multilevel_b_spline(
-                aggregated,
-                cell_size,
-                level=advanced_params.multilevel_b_spline_level,
-                context=context,
-                feedback=feedback if debug_mode else None,
+        with timeit('Interpolating estimated DEM'):
+            estimated_dem = (
+                multilevel_b_spline(
+                    aggregated,
+                    cell_size,
+                    level=advanced_params.multilevel_b_spline_level,
+                    context=context,
+                    feedback=feedback if debug_mode else None,
+                )
+                .align_to(gully_elevation)
+                .gaussian_filter(output=estimated_dem_output)
             )
-            .align_to(gully_elevation)
-            .gaussian_filter(output=estimated_dem_output)
-        )
-        gully_cover = (
-            multilevel_b_spline(
-                samples.boundary,
-                cell_size,
-                level=advanced_params.multilevel_b_spline_level,
-                context=context,
-                feedback=feedback if debug_mode else None,
+        with timeit('Interpolating gully cover'):
+            gully_cover = (
+                multilevel_b_spline(
+                    samples.boundary,
+                    cell_size,
+                    level=advanced_params.multilevel_b_spline_level,
+                    context=context,
+                    feedback=feedback if debug_mode else None,
+                )
+                .align_to(
+                    gully_elevation,
+                    output=(out_dir / 'gully_cover.tif').as_posix(),
+                )
+                .with_name(Layers.GULLY_COVER.name)
             )
-            .align_to(
-                gully_elevation, output=(out_dir / 'gully_cover.tif').as_posix()
-            )
-            .with_name(Layers.GULLY_COVER.name)
-        )
         gully_cover.layer.setCrs(crs)
         if debug_mode:
             project.addMapLayer(gully_cover.layer)
         validation_gully_cover = None
         if gully_future_elevation is not None:
-            gully_cover_samples = gully_future_elevation.sample(
-                [gully_future_limit], feedback=feedback, context=context
-            )
-            validation_gully_cover = multilevel_b_spline(
-                gully_cover_samples,
-                cell_size,
-                level=14,
-                context=context,
-                feedback=feedback if debug_mode else None,
-            ).align_to(gully_elevation)
+            with timeit('Interpolating validation gully cover'):
+                gully_cover_samples = gully_future_elevation.sample(
+                    [gully_future_limit], feedback=feedback, context=context
+                )
+                validation_gully_cover = multilevel_b_spline(
+                    gully_cover_samples,
+                    cell_size,
+                    level=14,
+                    context=context,
+                    feedback=feedback if debug_mode else None,
+                ).align_to(gully_elevation)
 
         results = {self.ESTIMATED_DEM: estimated_dem_output}
         if estimation_surface is not None:
-            evaluator = ForecastVolumeEvaluator(
-                computation_surface=estimation_surface,
-                gully_cover=gully_cover,
-                validation_gully_cover=validation_gully_cover,
-                out_file=Path(estimation_surface_output),
-                estimated_dem=estimated_dem,
-                boundary=gully_boundary,
-                dem=gully_elevation,
-                validation_dem=gully_future_elevation,
-                project=project if debug_mode else None,
-            )
-            evaluator.evaluate()
+            with timeit('Evaluating estimation surface'):
+                evaluator = ForecastVolumeEvaluator(
+                    computation_surface=estimation_surface,
+                    gully_cover=gully_cover,
+                    validation_gully_cover=validation_gully_cover,
+                    out_file=Path(estimation_surface_output),
+                    estimated_dem=estimated_dem,
+                    boundary=gully_boundary,
+                    dem=gully_elevation,
+                    validation_dem=gully_future_elevation,
+                    project=project if debug_mode else None,
+                )
+                evaluator.evaluate()
             results[self.ESTIMATION_SURFACE_OUTPUT] = estimation_surface_output
 
         return results
@@ -710,7 +742,7 @@ class EstimateErosionPast(QgsProcessingAlgorithm):
         self.addParameter(
             QgsProcessingParameterFeatureSource(
                 self.CENTERLINES,
-                self.tr('The gully past boundary centerlines'),
+                self.tr('The gully future boundary centerlines'),
                 [QgsProcessing.TypeVectorLine],
                 optional=True,
             )
@@ -739,7 +771,7 @@ class EstimateErosionPast(QgsProcessingAlgorithm):
         centerline_smoothness_param = QgsProcessingParameterNumber(
             self.CENTERLINE_SMOOTHNESS,
             self.tr('The r.voronoi.skeleton smoothness parameter'),
-            defaultValue=20,
+            defaultValue=25,
         )
         centerline_smoothness_param.setFlags(
             centerline_smoothness_param.flags()
@@ -825,8 +857,6 @@ class EstimateErosionPast(QgsProcessingAlgorithm):
         context: QgsProcessingContext,
         feedback: QgsProcessingFeedback | None = None,
     ) -> dict[str, t.Any]:
-        # TODO: prevent the code from breaking if feedback is None
-        assert feedback is not None
         eps = 0.001
         estimated_dem_output = self.parameterAsOutputLayer(
             parameters, self.ESTIMATED_DEM, context
@@ -857,11 +887,14 @@ class EstimateErosionPast(QgsProcessingAlgorithm):
                 parameters, self.GULLY_ELEVATION, context
             )
         )
-        gully_past_elevation = DEM(
-            self.parameterAsRasterLayer(
-                parameters, self.GULLY_PAST_ELEVATION, context
+        gully_past_elevation_input = self.parameterAsRasterLayer(
+            parameters, self.GULLY_PAST_ELEVATION, context
+        )
+        gully_past_elevation: DEM | None = None
+        if gully_past_elevation_input is not None:
+            gully_past_elevation = DEM(gully_past_elevation_input).align_to(
+                gully_elevation
             )
-        ).align_to(gully_elevation)
         gully_elevation_is_sink_removed = self.parameterAsBool(
             parameters, self.GULLY_ELEVATION_SINK_REMOVED, context
         )
@@ -939,15 +972,15 @@ class EstimateErosionPast(QgsProcessingAlgorithm):
             if first.intersects(limit_difference):
                 source_points.append(first)
         source_points_layer = geometries_to_layer(
-            source_points, Layers.SHORTEST_PATHS_START_POINTS.name
+            source_points, Layers.FLOW_PATH_PROFILE_SOURCE_POINTS.name
         )
         source_points_layer.setCrs(crs)
         if debug_mode:
             _, source_points_layer = export(
                 source_points_layer,
-                (out_dir / Layers.SHORTEST_PATHS_START_POINTS.name).with_suffix(
-                    '.fgb'
-                ),
+                (
+                    out_dir / Layers.FLOW_PATH_PROFILE_SOURCE_POINTS.name
+                ).with_suffix('.fgb'),
             )
             project.addMapLayer(source_points_layer)
 
@@ -982,6 +1015,11 @@ class EstimateErosionPast(QgsProcessingAlgorithm):
                 profile.convertGeometryCollectionToSubclass(
                     Qgis.GeometryType.Line
                 )
+        profiles = [
+            profile
+            for profile in profiles
+            if profile.wkbType() == Qgis.WkbType.MultiLineString
+        ]
 
         profiles_layer = geometries_to_layer(
             profiles, Layers.FLOW_PATH_PROFILES.name
@@ -995,7 +1033,7 @@ class EstimateErosionPast(QgsProcessingAlgorithm):
             project.addMapLayer(profiles_layer)
         with timeit('Profile mapping'):
             mapped_profiles = ProfileMapper(
-                profiles, difference
+                profiles, gully_past_polygon, project
             ).get_mapped_profiles()
             mapped_profiles_list = [
                 profile_map['mapped'] for profile_map in mapped_profiles
@@ -1007,12 +1045,24 @@ class EstimateErosionPast(QgsProcessingAlgorithm):
                 mapped_profiles_list,
                 Layers.MAPPED_PROFILES.name,
             )
+            flow_path_profiles_subset_layer = geometries_to_layer(
+                [
+                    profiles[profile['profile_index']]
+                    for profile in mapped_profiles
+                ],
+                'flow_path_profiles_subset',
+            )
             mapped_profiles_layer.setCrs(crs)
             _, mapped_profiles_layer = export(
                 mapped_profiles_layer,
                 (out_dir / Layers.MAPPED_PROFILES.name).with_suffix('.fgb'),
             )
-            project.addMapLayer(mapped_profiles_layer)
+            _, flow_path_profiles_subset_layer = export(
+                flow_path_profiles_subset_layer,
+                (out_dir / 'flow_path_profiles_subset.fgb'),
+            )
+            flow_path_profiles_subset_layer.setCrs(crs)
+            project.addMapLayer(flow_path_profiles_subset_layer)
 
         with timeit('Sample limit elevation'):
             gully_limit_sampled = gully_elevation.sample(
@@ -1034,7 +1084,7 @@ class EstimateErosionPast(QgsProcessingAlgorithm):
             project.addMapLayer(gully_cover.layer)
         with timeit('Sample gully cover'):
             gully_cover_sampled = gully_cover.sample(
-                [gully_past_limit],
+                [limit_difference.difference(gully_limit)],
                 feedback=feedback,
                 context=context,
             )
@@ -1043,7 +1093,9 @@ class EstimateErosionPast(QgsProcessingAlgorithm):
             flow_path_samples = get_estimated_samples(
                 dem=sink_removed,
                 gully_cover=gully_cover,
-                dem_truth=gully_past_elevation.remove_sinks(),
+                dem_truth=gully_past_elevation.remove_sinks()
+                if gully_past_elevation is not None
+                else None,
                 profiles=[
                     profiles[profile['profile_index']]
                     for profile in mapped_profiles
@@ -1052,14 +1104,27 @@ class EstimateErosionPast(QgsProcessingAlgorithm):
                 profiles_to_estimate=[
                     profile['mapped'] for profile in mapped_profiles
                 ],
-                sampled_boundary=gully_cover_sampled,
                 context=context,
                 feedback=feedback if debug_mode else None,
                 changepoint_penalty=advanced_params.changepoint_penalty,
             )
+        with timeit('Merge samples'):
+            samples = merge_vector_layers(
+                [
+                    flow_path_samples.estimated,
+                    gully_limit_sampled,
+                    gully_cover_sampled,
+                ],
+                # output=(out_dir / Layers.SAMPLES.name)
+                # .with_suffix('.fgb')
+                # .as_posix(),
+            )
+            print(f'Samples layer: {samples}')
+            # project.addMapLayer(samples)
+
         with timeit('Aggregate flow path samples'):
             aggregated = aggregate_samples(
-                flow_path_samples.estimated,
+                samples,
                 advanced_params.sample_aggregation,
             )
         if debug_mode:
@@ -1071,8 +1136,6 @@ class EstimateErosionPast(QgsProcessingAlgorithm):
                 driver_name='ESRI Shapefile',
             )
             project.addMapLayer(aggregated)
-        gully_elevation.layer.setCrs(crs)
-        gully_past_elevation.layer.setCrs(crs)
         with timeit('Estimate DEM'):
             estimated_dem = (
                 multilevel_b_spline(

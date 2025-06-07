@@ -129,7 +129,7 @@ class ProfileCenterlineMapper:
 @dataclass
 class ProfileMapper:
     profiles: c.Sequence[QgsGeometry]
-    boundary_difference: QgsGeometry
+    intersect_boundary: QgsGeometry
 
     def get_mapped_profiles(self) -> list[MappedProfile]:
         mapped_profiles: list[MappedProfile] = []
@@ -138,8 +138,9 @@ class ProfileMapper:
                 t.cast(
                     MappedProfile,
                     {
-                        #'mapped': profile.intersection(self.past_boundary),
-                        'mapped': profile.difference(self.boundary_difference),
+                        'mapped': profile.intersection(
+                            self.intersect_boundary
+                        ).coerceToType(Qgis.WkbType.MultiLineString)[0],
                         'profile_index': i,
                     },
                 )
@@ -153,11 +154,16 @@ class ProfileMapper:
         unique = remove_duplicated(
             [profile_map['mapped'] for profile_map in mapped_profiles]
         )
-        for mapped_profile in unique:
+        for i, mapped_profile in enumerate(unique):
+            if not mapped_profile.wkbType() == Qgis.WkbType.MultiLineString:
+                print(
+                    f'Warning: Mapped profile at index {i} is not a MultiLineString.'
+                )
+                continue
             mapped_profiles_subset = [
                 profile_map
                 for profile_map in mapped_profiles
-                if profile_map['mapped'] == mapped_profile
+                if profile_map['mapped'].equals(mapped_profile)
             ]
             if len(mapped_profiles_subset) == 1:
                 deduped.append(mapped_profiles_subset[0])

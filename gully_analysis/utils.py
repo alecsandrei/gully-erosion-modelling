@@ -38,6 +38,27 @@ def delete_holes(layer: QgsVectorLayer, min_area: float = 0) -> QgsVectorLayer:
     )['OUTPUT']
 
 
+def line_intersections(
+    input: QgsVectorLayer,
+    intersect: QgsVectorLayer,
+    output: str = 'TEMPORARY_OUTPUT',
+) -> QgsVectorLayer:
+    result = processing.run(
+        'native:lineintersections',
+        {
+            'INPUT': input,
+            'INTERSECT': intersect,
+            'INPUT_FIELDS': [],
+            'INTERSECT_FIELDS': [],
+            'INTERSECT_FIELDS_PREFIX': '',
+            'OUTPUT': output,
+        },
+    )['OUTPUT']
+    if output == 'TEMPORARY_OUTPUT':
+        return result
+    return QgsVectorLayer(result, input.name(), 'ogr')
+
+
 def intersection(
     layer: QgsVectorLayer,
     overlay: QgsVectorLayer,
@@ -96,7 +117,7 @@ def merge_vector_layers(
 ) -> QgsVectorLayer:
     if crs is None:
         crs = layers[0].crs()
-    return processing.run(
+    result = processing.run(
         'native:mergevectorlayers',
         {
             'LAYERS': layers,
@@ -105,6 +126,9 @@ def merge_vector_layers(
             'OUTPUT': output,
         },
     )['OUTPUT']
+    if not isinstance(result, QgsVectorLayer):
+        result = QgsVectorLayer(result, 'merged', 'ogr')
+    return result
 
 
 def get_first_geometry(layer: QgsVectorLayer) -> QgsGeometry:
@@ -131,8 +155,6 @@ def get_geometries_from_layer(
 def export(
     layer: QgsVectorLayer, out_file: Path, driver_name: str = 'FlatGeobuf'
 ) -> tuple[ExportResult, QgsVectorLayer]:
-    # NOTE: this function is unused. Should be dropped
-    # later on if no use is found
     options = QgsVectorFileWriter.SaveVectorOptions()
     ctx = QgsCoordinateTransformContext()
     options.driverName = driver_name

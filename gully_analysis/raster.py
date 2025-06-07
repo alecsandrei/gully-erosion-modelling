@@ -875,17 +875,14 @@ class BackcastVolumeEvaluator(VolumeEvaluator):
 
     def compute_delta(self) -> tuple[Raster, Raster | None]:
         """Computes the eroded volume difference between the known DEM and the estimated DEM."""
-        boundary_difference_volume = (
-            self.gully_cover.apply_mask(self.boundary_difference)
-            - self.dem.apply_mask(self.boundary_difference)
-        ).raster_volume()
-        boundary_intersect_volume = (
-            self.estimated_dem.apply_mask(self.boundary_intersect)
-            - self.dem.apply_mask(self.boundary_intersect)
-        ).raster_volume()
-        estimation = Raster.from_rasters(
-            [boundary_intersect_volume, boundary_difference_volume]
-        ).with_name('estimated volume')
+        estimation = (
+            (
+                self.estimated_dem.apply_mask(self.computation_surface)
+                - self.dem.apply_mask(self.computation_surface)
+            )
+            .raster_volume()
+            .with_name('estimation_delta')
+        )
         truth = None
         if self.validation_dem is not None:
             truth = (
