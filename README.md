@@ -1,5 +1,5 @@
-An attempt to rewrite [gully-erosion-estimation](https://github.com/alecsandrei/gully-erosion-estimation) using only PyQGIS.
+Source code for https://zenodo.org/records/15284237
 
-TODOs
+**ABSTRACT**
 
-- Add checks that confirms that the features overlap.
+The study proposes a methodology for estimating the volume of gully head erosion using high-resolution datasets obtained through LiDAR technology and/or Structure from Motion (SfM), along with satellite images from Google Earth archives and orthophotos. Manual extraction of the boundaries of four active reservoir bottom gullies was performed across two different time periods. For 2012 – a high-resolution digital elevation model (0.25 m) derived from LiDAR data and Google Earth imagery were utilized; for 2019 – a high-resolution digital elevation model (0.25 m) derived from SfM data and orthophotos were employed. A Geographic Information System (GIS) methodology was developed that uses a single DEM to backcast or forecast topographic data for the computation of the gully head eroded volume between two time periods: 2012–2019 and 2019–2012 respectively. The reconstruction of the topography was achieved by interpolating the gully boundary and a series of simulated flow paths. As topography is known for both 2012 and 2019, the validation of the method could be performed.
